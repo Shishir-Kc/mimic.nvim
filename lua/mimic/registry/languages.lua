@@ -1,0 +1,95 @@
+local clang_roots = {
+  ".clangd",
+  ".clang-tidy",
+  ".clang-format",
+  "compile_commands.json",
+  "compile_flags.txt",
+  "CMakeLists.txt",
+  "Makefile",
+  "meson.build",
+  "build.ninja",
+  "configure.ac",
+  "configure.in",
+  "config.h.in",
+}
+
+local js_roots = {
+  "package.json",
+  "tsconfig.json",
+  "jsconfig.json",
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+}
+
+return {
+  {
+    id = "python",
+    label = "Python",
+    filetypes = { "python" },
+    root_markers = {
+      "pyproject.toml",
+      "setup.py",
+      "setup.cfg",
+      "requirements.txt",
+      "Pipfile",
+      "pyrightconfig.json",
+      ".python-version",
+      "tox.ini",
+      "poetry.lock",
+      "uv.lock",
+    },
+  },
+  {
+    id = "rust",
+    label = "Rust",
+    filetypes = { "rust" },
+    root_markers = {
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-project.json",
+      "rust-toolchain.toml",
+    },
+  },
+  {
+    id = "c",
+    label = "C",
+    filetypes = { "c" },
+    root_markers = clang_roots,
+  },
+  {
+    id = "cpp",
+    label = "C++",
+    filetypes = { "cpp" },
+    root_markers = clang_roots,
+  },
+  {
+    id = "java",
+    label = "Java",
+    filetypes = { "java" },
+    root_markers = {
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "settings.gradle",
+      "settings.gradle.kts",
+      "build.xml",
+      "mvnw",
+      "gradlew",
+      ".project",
+      ".classpath",
+    },
+  },
+  {
+    id = "javascript",
+    label = "JavaScript",
+    filetypes = { "javascript", "javascriptreact", "javascript.jsx" },
+    root_markers = js_roots,
+  },
+  {
+    id = "typescript",
+    label = "TypeScript",
+    filetypes = { "typescript", "typescriptreact", "typescript.tsx" },
+    root_markers = js_roots,
+  },
+}
