@@ -95,6 +95,43 @@ function M.check()
     end
   end
 
+  local cache_loaded, Cache = pcall(require, "mimic.cache")
+  if not cache_loaded then
+    health.error("cache module failed to load", { tostring(Cache) })
+  else
+    local stats = Cache.stats()
+    health.ok(
+      ("cache: %d hits, %d misses, %d entries, %d evictions"):format(
+        stats.hits,
+        stats.misses,
+        stats.entries,
+        stats.evictions
+      )
+    )
+
+    local names = {}
+    for name in pairs(stats.namespaces) do
+      names[#names + 1] = name
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      local item = stats.namespaces[name]
+      health.info(
+        ("cache %s: %d hits, %d misses, %d entries, %d evictions"):format(
+          name,
+          item.hits,
+          item.misses,
+          item.entries,
+          item.evictions
+        )
+      )
+    end
+
+    health.info(
+      "cache invalidates on BufWritePost, FileChangedShellPost, FocusGained, VimResume, DirChanged, and User LazyLoad/LazyDone"
+    )
+  end
+
   local apply_loaded, Apply = pcall(require, "mimic.apply")
   if not apply_loaded then
     health.error("applier module failed to load", { tostring(Apply) })
