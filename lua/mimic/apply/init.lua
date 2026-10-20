@@ -101,6 +101,9 @@ local function env_defaults()
     plan = function(context, config)
       return Resolve.plan(context, config)
     end,
+    is_enabled = function()
+      return require("mimic").is_enabled()
+    end,
   }
 
   return defaults
@@ -180,6 +183,24 @@ function M.sweep(config, env)
     end
   end
   return results
+end
+
+---Revert mimic's changes, then apply the current plan again.
+---
+---This is used after an install changes tool availability. Sweeping without a
+---revert would leave an older formatter or linter entry in place because the
+---select path deliberately does not overwrite an existing entry.
+---
+---@param config table|nil
+---@param env table|nil
+---@return table[]
+function M.reapply(config, env)
+  env = resolve(env)
+  M.revert(env)
+  if not env.is_enabled() then
+    return {}
+  end
+  return M.sweep(config, env)
 end
 
 ---Create the FileType autocmd that applies mimic per buffer.
