@@ -4,14 +4,18 @@
 ---
 --- Detection is read only. It starts no LSP clients, changes no conform or
 --- nvim-lint configuration, loads no plugins on purpose, runs no processes,
---- and performs no downloads. Results are computed on demand.
+--- and performs no downloads. Filesystem evidence is cached in memory and
+--- refreshed by invalidation events, reload, and toggle.
 
 local Registry = require("mimic.registry")
 local Project = require("mimic.detect.project")
 local Existing = require("mimic.detect.existing")
 local Availability = require("mimic.detect.availability")
+local Cache = require("mimic.cache")
 
 local M = {}
+
+M._autocmd_group = nil
 
 local defaults = {
   current_buf = function()
@@ -128,10 +132,63 @@ function M.context(source, env)
   return context
 end
 
----Clear any detection state.
+---Clear cached evidence and reset cache statistics.
 ---
----Detection is stateless today. This exists so later phases with caching can
----hook into :Mimic reload without changing the public API.
-function M.clear() end
+---Existing configuration is never cached, so this only drops project evidence
+---and tool availability.
+function M.clear()
+  Cache.clear()
+end
+
+---Drop cached evidence without resetting cache statistics.
+---
+---Detection calls this from its invalidation autocmds. Omit the namespace to
+---drop every cached layer.
+---
+---@param namespace "project"|"availability"|nil
+function M.invalidate(namespace)
+  Cache.invalidate(namespace)
+end
+
+---Create the autocmds that invalidate cached evidence.
+---
+---The cache is refreshed by Neovim events only. mimic does not start
+---filesystem watchers.
+function M.setup_autocmds()
+  if M._autocmd_group ~= nil then
+    return
+  end
+
+  M._autocmd_group = vim.api.nvim_create_augroup("mimic_cache", { clear = true })
+
+  vim.api.nvim_create_autocmd({ "BufWritePost", "FileChangedShellPost" }, {
+    group = M._autocmd_group,
+    callback = function()
+      Cache.invalidate("project")
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "FocusGained", "VimResume" }, {
+    group = M._autocmd_group,
+    callback = function()
+      Cache.invalidate()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("DirChanged", {
+    group = M._autocmd_group,
+    callback = function()
+      Cache.invalidate()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("User", {
+    group = M._autocmd_group,
+    pattern = { "LazyLoad", "LazyDone" },
+    callback = function()
+      Cache.invalidate("availability")
+    end,
+  })
+end
 
 return M
