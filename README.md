@@ -5,14 +5,14 @@ the language and project context of the current buffer, then choose and
 configure the right LSP server, linter, and formatter. Existing configuration
 always wins.
 
-> **Status:** Phase 6 adds opt-in override mode. For the current buffer, mimic
-> detects the language, project root, project evidence, existing configuration,
-> and tool availability, scores candidates into one explainable plan per
-> category, and then applies its own choices: it starts the LSP servers it owns,
-> fills conform and nvim-lint gaps, and with `override` enabled replaces a
-> configured linter or formatter with the resolved best external tool. Existing
-> configuration still wins unless override is enabled. Caching and installation
-> are not implemented.
+> **Status:** Phase 7 adds an in-memory evidence cache with event-driven
+> invalidation. For the current buffer, mimic detects the language, project
+> root, project evidence, existing configuration, and tool availability, scores
+> candidates into one explainable plan per category, and then applies its own
+> choices: it starts the LSP servers it owns, fills conform and nvim-lint gaps,
+> and with `override` enabled replaces a configured linter or formatter with the
+> resolved best external tool. Existing configuration still wins unless
+> override is enabled. Installation is not implemented.
 
 ## Requirements
 
@@ -294,13 +294,48 @@ previous value.
 Runtime enablement is indistinguishable from user configuration, so a tool that
 LazyVim enabled at runtime is reported as a user-level owner.
 
+## Caching
+
+Detection caches only filesystem evidence:
+
+- Project evidence per language and root: root markers, config files, package
+  manager signals, and `package.json` dependencies.
+- Tool availability per language and root: project-local binaries, `PATH`,
+  Mason packages, and required plugin availability.
+
+Existing configuration is never cached. Active LSP clients, conform entries,
+nvim-lint entries, and the applier ledger are read fresh on every detection, so
+user edits and mimic's own writes are always visible. Resolved plans are also
+not cached, so `:Mimic status` always explains the current state.
+
+The cache lives for the current Neovim session and is bounded to 256 entries
+per layer. It is invalidated on these events:
+
+| Event | Cached layer |
+| --- | --- |
+| `BufWritePost`, `FileChangedShellPost` | Project evidence |
+| `FocusGained`, `VimResume`, `DirChanged` | Project evidence and availability |
+| `User LazyLoad`, `User LazyDone` | Availability |
+| `:Mimic reload`, `:Mimic toggle` | Everything, including statistics |
+
+There are no OS-level filesystem watchers. An external project change made
+while Neovim is focused is picked up on the next save, focus change, directory
+change, or `:Mimic reload`. A tool installed outside Neovim is picked up when
+focus returns or after `:Mimic reload`. Cache invalidation refreshes evidence
+only. Applying still happens on `FileType`, on `setup()` for loaded buffers,
+and on `reload` or `toggle`, so a changed project plan is not rewritten while
+you edit. Run `:Mimic reload` to apply a changed plan to open buffers.
+
+`:Mimic status` reports hit, miss, and entry counts. `:checkhealth mimic`
+reports per-layer statistics and the invalidation events above.
+
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
-| `:Mimic status` | Show setup state, session state (including the enabled override categories), integration availability, registry counts, the current buffer's detection result, its resolution plan, and what mimic has applied, including any override and the owner it replaced. |
-| `:Mimic toggle` | Enable or disable mimic for this session only. Turning off reverts everything mimic applied; turning on applies to loaded buffers again. |
-| `:Mimic reload` | Revert what mimic applied, clear session state, and reapply the original options. |
+| `:Mimic status` | Show setup state, session state (including the enabled override categories), integration availability, registry counts, cache counts, the current buffer's detection result, its resolution plan, and what mimic has applied, including any override and the owner it replaced. |
+| `:Mimic toggle` | Enable or disable mimic for this session only. Turning off reverts everything mimic applied and clears cached evidence; turning on clears cached evidence and applies to loaded buffers again. |
+| `:Mimic reload` | Revert what mimic applied, clear cached evidence and session state, and reapply the original options. |
 | `:Mimic install` | Phase 8 placeholder. Downloads nothing. |
 
 Completion for subcommands is included.
@@ -314,8 +349,8 @@ Completion for subcommands is included.
 The check verifies the Neovim version, whether `setup()` has run, which
 integration points are present, whether override is enabled, whether the
 registry data is valid, whether detection works for the current buffer, the
-resulting plan, and how much the applier has changed, including active
-overrides. It never installs anything.
+resulting plan, cache hit and miss counts, and how much the applier has changed,
+including active overrides. It never installs anything.
 
 ## Development checks
 
@@ -348,6 +383,14 @@ NVIM_APPNAME=mimic-test nvim --headless \
   --cmd 'set runtimepath+=$HOME/.local/share/nvim/lazy/conform.nvim' \
   --cmd 'set runtimepath+=$HOME/.local/share/nvim/lazy/nvim-lint' \
   -l tests/registry_integration.lua
+```
+
+Clean profile cache spec:
+
+```sh
+NVIM_APPNAME=mimic-test nvim --headless \
+  -u tests/minimal_init.lua \
+  -l tests/cache_spec.lua
 ```
 
 Clean profile detection spec:
@@ -441,7 +484,7 @@ nvim --headless -u NONE \
 The clean `NVIM_APPNAME=mimic-test` profile is the test bed for the applier,
 because the main config already covers many languages.
 
-## What Phase 6 does not do
+## What mimic does not do
 
 - No LSP override. `override.lsp` is reserved and ignored, because global
   enablement and per-project decisions do not mix cleanly.
@@ -451,8 +494,11 @@ because the main config already covers many languages.
 - No executable introspection. Availability checks the filesystem only, it does
   not ask rustup, pip, or any other tool what it has installed.
 - No Mason installation.
-- No change watching or cache. Application happens on `FileType`, on `setup()`
-  for loaded buffers, and on `reload` or `toggle`.
+- No OS-level filesystem watchers. Cached evidence is invalidated by Neovim
+  events, `:Mimic reload`, and `:Mimic toggle`.
+- No automatic re-apply when evidence changes. Application happens on
+  `FileType`, on `setup()` for loaded buffers, and on `reload` or `toggle`.
+- No persistent cache. Cached evidence lives only for the current session.
 - No user-defined tool registry. Override only chooses among registry tools, and
   a custom owner is kept.
 - No Bun, Deno, framework, or runtime detection.
