@@ -157,7 +157,7 @@ function M.usage()
   notify("usage: :Mimic {status|toggle|reload|install}", vim.log.levels.WARN)
 end
 
----Print setup state, integration availability, and registry counts.
+---Print setup state, integration availability, registry counts, and cache stats.
 function M.status()
   local mimic = ensure_setup()
   local status = mimic.status()
@@ -186,6 +186,16 @@ function M.status()
     )
   elseif status.registry_error then
     lines[#lines + 1] = "Registry: invalid (run :checkhealth mimic)"
+  end
+
+  if status.cache then
+    lines[#lines + 1] = ("Cache: %d hits, %d misses, %d entries"):format(
+      status.cache.hits,
+      status.cache.misses,
+      status.cache.entries
+    )
+  elseif status.cache_error then
+    lines[#lines + 1] = "Cache: unavailable (run :checkhealth mimic)"
   end
 
   if status.context then
@@ -241,7 +251,7 @@ function M.reload()
   notify("configuration reloaded")
 end
 
----Installer placeholder. Phase 6 never downloads anything.
+---Installer placeholder. It never downloads anything.
 function M.install()
   ensure_setup()
   notify("install is not implemented yet. Nothing was downloaded.", vim.log.levels.WARN)
