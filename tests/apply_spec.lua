@@ -388,5 +388,75 @@ local ldeferred = Lint.apply(entry("ruff", "select", "external", "lint"), contex
 })
 eq(ldeferred.status, "deferred", "lint defers without nvim-lint")
 
+--------------------------------------------------------------- reapply after install
+
+State.reset()
+local reapply_conform = { formatters_by_ft = {} }
+local reapply_plan = {
+  analyzed = true,
+  categories = {
+    lsp = { category = "lsp", action = "none", reason = "no available tool" },
+    lint = { category = "lint", action = "none", reason = "no available tool" },
+    format = {
+      category = "format",
+      action = "select",
+      owner = "ruff",
+      label = "Ruff",
+      mechanism = "external",
+    },
+  },
+}
+local reapply_env = {
+  buf_is_loaded = function()
+    return true
+  end,
+  buftype = function()
+    return ""
+  end,
+  deepcopy = vim.deepcopy,
+  deep_equal = vim.deep_equal,
+  detect = function()
+    local ctx = context("python")
+    ctx.enabled = true
+    ctx.supported = true
+    return ctx
+  end,
+  is_enabled = function()
+    return true
+  end,
+  list_bufs = function()
+    return { 1 }
+  end,
+  loaded = function(name)
+    if name == "conform" then
+      return reapply_conform
+    end
+    return nil
+  end,
+  plan = function()
+    return reapply_plan
+  end,
+  require_module = function()
+    error("require_module should not be called when conform is loaded")
+  end,
+}
+
+Format.apply(entry("black", "select", "external", "format"), context("python"), reapply_env)
+eq(reapply_conform.formatters_by_ft.python[1], "black", "the initial formatter is applied")
+eq(State.format_edits()[1].previous, nil, "the initial edit records no previous formatter")
+
+local reapplied = Apply.reapply({}, reapply_env)
+eq(#reapplied, 1, "reapply sweeps one loaded buffer")
+eq(reapply_conform.formatters_by_ft.python[1], "ruff_fix", "reapply switches to the newly available formatter")
+eq(reapply_conform.formatters_by_ft.python[2], "ruff_format", "reapply writes the full formatter list")
+eq(State.format_edits()[1].previous, nil, "reapply records the restored value as the previous formatter")
+
+reapply_env.is_enabled = function()
+  return false
+end
+Apply.reapply({}, reapply_env)
+eq(reapply_conform.formatters_by_ft.python, nil, "reapply reverts but does not sweep while mimic is disabled")
+eq(#State.format_edits(), 0, "disabled reapply clears the ledger")
+
 State.reset()
 print("mimic apply spec: ok")
