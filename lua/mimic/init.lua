@@ -1,12 +1,16 @@
 ---@brief
 --- mimic: adaptive LSP, linter, and formatter selection for Neovim.
 ---
---- Phase 6 adds opt-in override mode on top of the applier: the resolved plan
---- is applied to real configuration. setup() resolves options and stores them,
---- then applies mimic's own choices on FileType, filling conform and nvim-lint
---- gaps, starting only servers mimic owns, and with override enabled replacing
---- a configured linter or formatter with the resolved best external tool.
---- reload and toggle undo what mimic applied.
+--- Phase 7 adds an in-memory cache for filesystem evidence. Project evidence
+--- and tool availability are cached per language and root, then refreshed by
+--- invalidation events, reload, and toggle. Existing configuration and
+--- resolved plans are always read fresh.
+---
+--- Phase 6 adds opt-in override mode on top of the applier: setup() resolves
+--- options and stores them, then applies mimic's own choices on FileType,
+--- filling conform and nvim-lint gaps, starting only servers mimic owns, and
+--- with override enabled replacing a configured linter or formatter with the
+--- resolved best external tool. reload and toggle undo what mimic applied.
 
 local Config = require("mimic.config")
 
@@ -105,6 +109,11 @@ function M.setup(opts, flags)
 
   notify_warnings(warnings)
 
+  local detect_ok, Detect = pcall(require, "mimic.detect")
+  if detect_ok and type(Detect.setup_autocmds) == "function" then
+    Detect.setup_autocmds()
+  end
+
   local ok, Apply = pcall(require, "mimic.apply")
   if ok then
     Apply.setup_autocmds()
@@ -152,11 +161,17 @@ end
 ---Toggle mimic for this Neovim session only.
 ---
 ---Turning off reverts everything mimic applied. Turning on applies to loaded
----buffers again.
+---buffers again. Both transitions clear cached evidence so the next plan reads
+---the current project and tool state.
 ---
 ---@return boolean enabled
 function M.toggle()
   M._session_enabled = not M.is_enabled()
+
+  local detect_ok, Detect = pcall(require, "mimic.detect")
+  if detect_ok and type(Detect.clear) == "function" then
+    Detect.clear()
+  end
 
   local ok, Apply = pcall(require, "mimic.apply")
   if ok then
@@ -180,6 +195,16 @@ local function applied_state()
     return nil, tostring(snapshot)
   end
   return snapshot, nil
+end
+
+local function cache_summary()
+  local ok, result = pcall(function()
+    return require("mimic.cache").stats()
+  end)
+  if not ok then
+    return nil, tostring(result)
+  end
+  return result, nil
 end
 
 local function registry_summary()
@@ -237,6 +262,7 @@ function M.status()
   local context, context_error = detect_context()
   local plan, plan_error = resolve_plan(context)
   local applied, applied_error = applied_state()
+  local cache, cache_error = cache_summary()
 
   return {
     version = M.version,
@@ -253,6 +279,8 @@ function M.status()
     plan_error = plan_error,
     applied = applied,
     applied_error = applied_error,
+    cache = cache,
+    cache_error = cache_error,
     java_missing_jdtls = java_missing_jdtls,
   }
 end
