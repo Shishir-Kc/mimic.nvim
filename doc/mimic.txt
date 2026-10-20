@@ -14,7 +14,8 @@ CONTENTS                                                  *mimic-contents*
   9. Resolution ........................................ |mimic-resolution|
  10. Applying ........................................... |mimic-applying|
  11. Override mode ...................................... |mimic-override|
- 12. Design notes ....................................... |mimic-design|
+ 12. Caching ............................................. |mimic-cache|
+ 13. Design notes ....................................... |mimic-design|
 
 ==============================================================================
 1. INTRODUCTION                                          *mimic-introduction*
@@ -26,7 +27,8 @@ It is designed for LazyVim but does not require LazyVim.
 The plugin follows a fill-in policy: existing configuration wins. mimic only
 adds a tool when the category has no owner yet.
 
-Phase 6 adds opt-in override mode. Detection reports the language, project
+Phase 7 adds an in-memory evidence cache with event-driven invalidation.
+Phase 6 added opt-in override mode. Detection reports the language, project
 root, project evidence, existing configuration, and tool availability for the
 current buffer. Resolution scores that evidence into one explainable plan per
 category. The applier then fills the gaps in that plan: it starts the LSP
@@ -123,21 +125,22 @@ setup() is idempotent. Calling it again without reload is a no-op.
                                                                 *:Mimic-status*
 :Mimic status
   Show setup state, session state including the enabled override categories,
-  registry counts, the availability of the four integration points plus the
-  optional nvim-jdtls dependency, the detection result for the current buffer,
-  its resolution plan, and what mimic has applied, including any override and
-  the owner it replaced.
+  registry counts, cache hit and miss counts, the availability of the four
+  integration points plus the optional nvim-jdtls dependency, the detection
+  result for the current buffer, its resolution plan, and what mimic has
+  applied, including any override and the owner it replaced.
 
                                                                 *:Mimic-toggle*
 :Mimic toggle
   Enable or disable mimic for this Neovim session. This does not change the
-  configured value. Turning off reverts everything mimic applied; turning on
-  applies to loaded buffers again.
+  configured value. Both transitions clear cached evidence. Turning off
+  reverts everything mimic applied; turning on applies to loaded buffers again.
 
                                                                 *:Mimic-reload*
 :Mimic reload
-  Revert everything mimic applied, clear session state, and reapply the
-  original setup() options. Reload bypasses the double-setup guard.
+  Revert everything mimic applied, clear cached evidence and session state,
+  and reapply the original setup() options. Reload bypasses the double-setup
+  guard.
 
                                                                *:Mimic-install*
 :Mimic install
@@ -156,8 +159,8 @@ Run: >vim
 The check verifies the Neovim version, whether setup() has run, which
 integration points are available, whether override is enabled, whether the
 registry data is valid, whether detection works for the current buffer, the
-resulting plan, and how much the applier has changed, including active
-overrides. It never installs anything.
+resulting plan, cache hit and miss counts, and how much the applier has changed,
+including active overrides. It never installs anything.
 
 ==============================================================================
 7. REGISTRY                                                  *mimic-registry*
@@ -220,6 +223,9 @@ For a buffer, detection reports:
   - Tool availability: for every registry candidate, whether its executable is
     found in a project local directory, on PATH, or in the Mason package
     directory. Plugin requirements such as nvim-jdtls are checked too.
+
+Project evidence and tool availability are cached in memory per language and
+root. Existing configuration is not cached. See |mimic-cache|.
 
 Detection records sources. Resolution classifies them and decides the fill-in.
 See |mimic-resolution|. Detection ignores the entries and clients that mimic
@@ -365,7 +371,40 @@ Runtime enablement is indistinguishable from user configuration, so a tool
 that LazyVim enabled at runtime is reported as a user-level owner.
 
 ==============================================================================
-12. DESIGN NOTES                                               *mimic-design*
+12. CACHING                                                    *mimic-cache*
+
+Detection caches filesystem evidence only, in memory, for the current Neovim
+session:
+
+  - Project evidence per language and root: root markers, config files,
+    package manager signals, and package.json dependencies.
+  - Tool availability per language and root: project local binaries, PATH,
+    Mason packages, and required plugin availability.
+
+Existing configuration and resolved plans are never cached. Active LSP clients,
+conform entries, nvim-lint entries, and the applier ledger are always read
+fresh, so user edits and mimic's own writes are visible. Plans always explain
+the current state.
+
+The cache is bounded to 256 entries per layer. Invalidation events:
+
+  BufWritePost, FileChangedShellPost       Project evidence
+  FocusGained, VimResume, DirChanged       Both layers
+  User LazyLoad, User LazyDone             Availability
+  |:Mimic-reload|, |:Mimic-toggle|         Both layers and statistics
+
+There are no OS-level filesystem watchers. An external project change made
+while Neovim is focused is picked up on the next save, focus change, directory
+change, or reload. A tool installed outside Neovim is picked up when focus
+returns or after a reload. Cache invalidation refreshes evidence only.
+Application still happens on FileType, on setup() for loaded buffers, and on
+reload or toggle. Run |:Mimic-reload| to apply a changed plan to open buffers.
+
+|:Mimic-status| reports hit, miss, and entry counts. |mimic-health| reports
+per-layer statistics and the events above.
+
+==============================================================================
+13. DESIGN NOTES                                               *mimic-design*
 
 Authority order, highest first: user explicit configuration, project signals,
 plugin registry defaults, LazyVim extras. The user always wins.
@@ -374,7 +413,7 @@ One tool owns a category for a buffer. mimic never starts a second LSP server
 for the same job and never adds a linter that is already provided by an active
 LSP server.
 
-Phase 6 contains the registry, read-only detection, resolution, the applier,
-and opt-in override mode. Cache and installer arrive in later phases.
+Phase 7 contains the registry, read-only detection, resolution, the applier,
+opt-in override mode, and the evidence cache. The installer arrives in Phase 8.
 
 vim:tw=78:ts=8:noet:ft=help:norl:
