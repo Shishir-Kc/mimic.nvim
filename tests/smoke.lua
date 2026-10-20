@@ -140,6 +140,8 @@ eq(Cache.stats().entries, 0, "toggle clears cached evidence again")
 
 require("mimic.command").dispatch("status")
 require("mimic.command").dispatch("install")
+eq(package.loaded["mason"], nil, "install on an unsupported buffer does not load Mason")
+eq(require("mimic.install")._active, nil, "install on an unsupported buffer leaves no active job")
 
 local Detect = require("mimic.detect")
 local context = Detect.context(0)
