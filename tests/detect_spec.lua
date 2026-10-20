@@ -9,6 +9,8 @@ local Project = require("mimic.detect.project")
 local Existing = require("mimic.detect.existing")
 local Availability = require("mimic.detect.availability")
 
+Detect.clear()
+
 -- Language mapping ----------------------------------------------------------
 
 local language, filetype, reason = Detect.language(1, {
