@@ -4,8 +4,13 @@
 ---
 --- This module is read only. It never starts processes, never writes files,
 --- and never mutates plugin configuration.
+---
+--- Root discovery runs on every call because it is cheap and must see new or
+--- removed root markers immediately. The evidence collected under a root is
+--- cached per language and root. Cached tables are shared and read only.
 
 local Registry = require("mimic.registry")
+local Cache = require("mimic.cache")
 
 local M = {}
 
@@ -110,6 +115,47 @@ local function empty()
   }
 end
 
+local function analyze_root(env, root, language_def)
+  local result = {
+    root_source = nil,
+    markers = {},
+    files = {},
+    signals = {},
+    packages = {},
+  }
+
+  for _, name in ipairs(language_def.root_markers) do
+    if exists(env, env.join(root, name)) then
+      result.markers[#result.markers + 1] = name
+    end
+  end
+
+  if result.markers[1] then
+    result.root_source = result.markers[1]
+  elseif exists(env, env.join(root, ".git")) then
+    result.root_source = ".git"
+  else
+    result.root_source = "unknown"
+  end
+
+  for _, category in ipairs(Registry.categories) do
+    for _, candidate in ipairs(Registry.candidates(language_def.id, category)) do
+      for _, name in ipairs(candidate.tool.config_files or {}) do
+        if result.files[name] == nil then
+          local file = env.join(root, name)
+          if exists(env, file) then
+            result.files[name] = file
+          end
+        end
+      end
+    end
+  end
+
+  result.signals = collect_signals(env, root)
+  result.packages = read_packages(env, root)
+  return result
+end
+
 ---Analyze project evidence for a source.
 ---
 ---The source may be a buffer number or a file path.
@@ -136,46 +182,20 @@ function M.analyze(source, language, env)
     return empty()
   end
 
-  local result = {
+  local key = language .. "\0" .. root
+  local evidence = Cache.fetch("project", key, function()
+    return analyze_root(env, root, language_def)
+  end)
+
+  return {
     root = root,
-    root_source = nil,
+    root_source = evidence.root_source,
     git_root = env.root(source, ".git"),
-    markers = {},
-    files = {},
-    signals = {},
-    packages = {},
+    markers = evidence.markers,
+    files = evidence.files,
+    signals = evidence.signals,
+    packages = evidence.packages,
   }
-
-  for _, name in ipairs(language_def.root_markers) do
-    if exists(env, env.join(root, name)) then
-      result.markers[#result.markers + 1] = name
-    end
-  end
-
-  if result.markers[1] then
-    result.root_source = result.markers[1]
-  elseif exists(env, env.join(root, ".git")) then
-    result.root_source = ".git"
-  else
-    result.root_source = "unknown"
-  end
-
-  for _, category in ipairs(Registry.categories) do
-    for _, candidate in ipairs(Registry.candidates(language, category)) do
-      for _, name in ipairs(candidate.tool.config_files or {}) do
-        if result.files[name] == nil then
-          local file = env.join(root, name)
-          if exists(env, file) then
-            result.files[name] = file
-          end
-        end
-      end
-    end
-  end
-
-  result.signals = collect_signals(env, root)
-  result.packages = read_packages(env, root)
-  return result
 end
 
 return M
