@@ -1,4 +1,4 @@
--- Phase 6 smoke test.
+-- Phase 7 smoke test.
 --
 -- Run with:
 --   NVIM_APPNAME=mimic-test nvim --headless -u tests/minimal_init.lua -l tests/smoke.lua
@@ -12,6 +12,7 @@ end
 local Config = require("mimic.config")
 local Registry = require("mimic.registry")
 local mimic = require("mimic")
+local Cache = require("mimic.cache")
 
 eq(vim.fn.exists(":Mimic"), 2, ":Mimic command exists")
 eq(#vim.lsp.get_clients(), 0, "loading the registry starts no LSP clients")
@@ -88,6 +89,12 @@ mimic.reload()
 eq(mimic.is_enabled(), false, "reload clears session state and reapplies options")
 eq(mimic.config.enabled, false, "reload bypasses the double-setup guard")
 
+Cache.fetch("smoke", "reload", function()
+  return true
+end)
+mimic.reload()
+eq(Cache.stats().entries, 0, "reload clears cached evidence")
+
 local status = mimic.status()
 eq(status.did_setup, true, "status reports setup")
 eq(type(status.integrations), "table", "status includes integrations")
@@ -107,12 +114,29 @@ eq(type(status.applied), "table", "status includes applied state")
 eq(#status.applied.clients, 0, "no LSP clients are started by setup")
 eq(#status.applied.format_edits, 0, "no formatter edits on a scratch buffer")
 eq(#status.applied.lint_edits, 0, "no linter edits on a scratch buffer")
+eq(type(status.cache), "table", "status includes cache statistics")
+eq(type(status.cache.entries), "number", "status cache statistics include entries")
+eq(status.cache_error, nil, "status reports no cache error")
 
 local mimic_filetype = vim.api.nvim_get_autocmds({ group = "mimic", event = "FileType" })
 eq(#mimic_filetype >= 1, true, "setup creates the mimic FileType autocmd")
 
+local cache_autocmds = vim.api.nvim_get_autocmds({ group = "mimic_cache" })
+eq(#cache_autocmds >= 4, true, "setup creates the cache invalidation autocmds")
+
 mimic.setup({}, { force = true })
 eq(mimic.config.enabled, true, "reset to defaults for the clean run")
+
+Cache.fetch("smoke", "toggle", function()
+  return true
+end)
+mimic.toggle()
+eq(mimic.is_enabled(), false, "toggle disables the session")
+eq(Cache.stats().entries, 0, "toggle clears cached evidence")
+
+mimic.toggle()
+eq(mimic.is_enabled(), true, "toggle enables the session again")
+eq(Cache.stats().entries, 0, "toggle clears cached evidence again")
 
 require("mimic.command").dispatch("status")
 require("mimic.command").dispatch("install")
