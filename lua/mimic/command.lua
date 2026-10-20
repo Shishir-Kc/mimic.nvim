@@ -101,6 +101,32 @@ local function plan_lines(plan)
   return lines
 end
 
+local function install_lines(proposal)
+  local lines = {}
+  local packages = {}
+  for _, package in ipairs(proposal.packages or {}) do
+    local categories = table.concat(package.categories or {}, ",")
+    if categories ~= "" then
+      packages[#packages + 1] = ("%s (%s)"):format(package.name, categories)
+    else
+      packages[#packages + 1] = package.name
+    end
+  end
+  if #packages > 0 then
+    lines[#lines + 1] = "  mason: " .. table.concat(packages, ", ")
+  end
+
+  local manual = {}
+  for _, item in ipairs(proposal.manual or {}) do
+    manual[#manual + 1] = ("%s: %s"):format(item.label or item.tool, item.reason)
+  end
+  if #manual > 0 then
+    lines[#lines + 1] = "  manual: " .. table.concat(manual, ", ")
+  end
+
+  return lines
+end
+
 local function applied_lines(applied)
   local lines = { "Applied:" }
   local clients = applied.clients or {}
@@ -168,6 +194,7 @@ function M.status()
     ("Setup: %s"):format(status.did_setup and "yes" or "no"),
     ("Enabled: %s"):format(status.enabled and "yes" or "no"),
     ("Override: %s"):format(override_label(status.override)),
+    ("Install: %s"):format(status.install and status.install.mode or "?"),
     "",
     "Integrations:",
   }
@@ -218,6 +245,20 @@ function M.status()
     lines[#lines + 1] = "Plan: resolution failed (run :checkhealth mimic)"
   end
 
+  if status.install_proposal then
+    local planned = install_lines(status.install_proposal)
+    if #planned > 0 then
+      lines[#lines + 1] = ""
+      lines[#lines + 1] = "Install plan:"
+      for _, line in ipairs(planned) do
+        lines[#lines + 1] = line
+      end
+    end
+  elseif status.install_proposal_error then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "Install plan: unavailable (run :checkhealth mimic)"
+  end
+
   if status.applied then
     lines[#lines + 1] = ""
     for _, line in ipairs(applied_lines(status.applied)) do
@@ -251,10 +292,10 @@ function M.reload()
   notify("configuration reloaded")
 end
 
----Installer placeholder. It never downloads anything.
+---Install missing Mason packages for the current buffer.
 function M.install()
-  ensure_setup()
-  notify("install is not implemented yet. Nothing was downloaded.", vim.log.levels.WARN)
+  local mimic = ensure_setup()
+  require("mimic.install").start(mimic.config)
 end
 
 ---Dispatch a subcommand from :Mimic.
