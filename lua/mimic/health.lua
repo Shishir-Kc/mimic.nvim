@@ -40,6 +40,9 @@ function M.check()
     health.ok(("override: %s"):format(table.concat(override_categories, ",")))
   end
 
+  local install_mode = mimic.config and mimic.config.install and mimic.config.install.mode or "ask"
+  health.ok(("install mode: %s"):format(install_mode))
+
   local loaded, Registry = pcall(require, "mimic.registry")
   if not loaded then
     health.error("registry failed to load", { tostring(Registry) })
@@ -86,6 +89,26 @@ function M.check()
               describe(plan.categories.format)
             )
           )
+
+          local proposed, proposal = pcall(function()
+            return require("mimic.install.proposal").build(context, plan, mimic.config)
+          end)
+          if not proposed then
+            health.warn("install proposal failed", { tostring(proposal) })
+          elseif type(proposal) ~= "table" then
+            health.warn("install proposal returned no data")
+          elseif #proposal.packages > 0 or #proposal.manual > 0 then
+            local packages = {}
+            for _, package in ipairs(proposal.packages) do
+              packages[#packages + 1] = ("%s (%s)"):format(package.name, table.concat(package.categories, ","))
+            end
+            if #packages > 0 then
+              health.info(("installable: %s"):format(table.concat(packages, ", ")))
+            end
+            for _, item in ipairs(proposal.manual) do
+              health.info(("manual: %s: %s"):format(item.label, item.reason))
+            end
+          end
         else
           health.info(("resolution inactive (%s)"):format(plan.reason or "not applicable"))
         end
@@ -177,7 +200,9 @@ function M.check()
     end
   end
 
-  health.info("mimic does not download language tools during setup.")
+  health.info(
+    "mimic does not download language tools during setup; Mason packages are downloaded only for an explicit :Mimic install."
+  )
 end
 
 return M
