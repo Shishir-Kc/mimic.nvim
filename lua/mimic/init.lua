@@ -240,6 +240,19 @@ local function resolve_plan(context)
   return result, nil
 end
 
+local function install_proposal(context, plan)
+  if context == nil or plan == nil or not plan.analyzed then
+    return nil, nil
+  end
+  local ok, result = pcall(function()
+    return require("mimic.install.proposal").build(context, plan, M.config)
+  end)
+  if not ok then
+    return nil, tostring(result)
+  end
+  return result, nil
+end
+
 ---Return a plain table used by :Mimic status and :checkhealth mimic.
 ---
 ---@return table
@@ -261,6 +274,7 @@ function M.status()
   local registry, registry_error = registry_summary()
   local context, context_error = detect_context()
   local plan, plan_error = resolve_plan(context)
+  local install, install_error = install_proposal(context, plan)
   local applied, applied_error = applied_state()
   local cache, cache_error = cache_summary()
 
@@ -270,6 +284,7 @@ function M.status()
     did_setup = M._did_setup,
     enabled = M.is_enabled(),
     override = M.config ~= nil and M.config.override or nil,
+    install = M.config ~= nil and M.config.install or nil,
     integrations = integrations,
     registry = registry,
     registry_error = registry_error,
@@ -277,6 +292,8 @@ function M.status()
     context_error = context_error,
     plan = plan,
     plan_error = plan_error,
+    install_proposal = install,
+    install_proposal_error = install_error,
     applied = applied,
     applied_error = applied_error,
     cache = cache,
