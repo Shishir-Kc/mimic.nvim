@@ -5,14 +5,16 @@ the language and project context of the current buffer, then choose and
 configure the right LSP server, linter, and formatter. Existing configuration
 always wins.
 
-> **Status:** Phase 7 adds an in-memory evidence cache with event-driven
-> invalidation. For the current buffer, mimic detects the language, project
-> root, project evidence, existing configuration, and tool availability, scores
-> candidates into one explainable plan per category, and then applies its own
-> choices: it starts the LSP servers it owns, fills conform and nvim-lint gaps,
-> and with `override` enabled replaces a configured linter or formatter with the
-> resolved best external tool. Existing configuration still wins unless
-> override is enabled. Installation is not implemented.
+> **Status:** Phase 8 adds an opt-in Mason installer. For the current buffer,
+> mimic detects the language, project root, project evidence, existing
+> configuration, and tool availability, scores candidates into one explainable
+> plan per category, and then applies its own choices: it starts the LSP servers
+> it owns, fills conform and nvim-lint gaps, and with `override` enabled
+> replaces a configured linter or formatter with the resolved best external
+> tool. Existing configuration still wins unless override is enabled.
+> `:Mimic install` can download missing Mason tools for categories with no
+> owner. It never installs plugins, never installs non-Mason tools, and never
+> downloads in the background.
 
 ## Requirements
 
@@ -20,7 +22,8 @@ always wins.
 - [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) for LSP server definitions.
 - [conform.nvim](https://github.com/stevearc/conform.nvim) for formatting.
 - [nvim-lint](https://github.com/mfussenegger/nvim-lint) for linting.
-- [mason.nvim](https://github.com/mason-org/mason.nvim) for the future installer.
+- [mason.nvim](https://github.com/mason-org/mason.nvim) for `:Mimic install`.
+  The plugin is optional if you install language tools yourself.
 
 Java support additionally needs
 [nvim-jdtls](https://github.com/mfussenegger/nvim-jdtls). It is a soft
@@ -47,10 +50,10 @@ With lazy.nvim:
 
 `lazy.nvim` clones the four declared plugin dependencies. `mimic` itself does
 not download or install language tools during setup. Language tools such as
-pyright, ruff, rust-analyzer, clangd, and jdtls are only installed when
-installation is explicitly requested with `:Mimic install` or explicitly
-enabled through `install.mode`. Installation is not implemented yet and
-downloads nothing.
+pyright, ruff, rust-analyzer, clangd, and jdtls are only installed when you run
+`:Mimic install` explicitly. The installer uses Mason, fills only categories
+that currently have no owner, and reports non-Mason tools as manual hints. It
+never installs plugins.
 
 Add `mfussenegger/nvim-jdtls` separately if you work with Java:
 
@@ -103,6 +106,16 @@ warning and are ignored. Invalid values keep their defaults.
 `format` for the session, a table enables only the named categories, and `lsp`
 is reserved and not implemented yet. Unknown override categories produce a
 warning and are ignored.
+
+`install.mode` controls what `:Mimic install` does:
+
+- `ask` shows the proposed Mason packages and asks before downloading. If
+  Neovim has no UI to confirm, it refuses and explains why.
+- `never` reports the proposal and manual hints, but downloads nothing.
+- `auto` skips the prompt for an explicit `:Mimic install` call.
+
+No mode installs anything in the background. Setup, `FileType`, `reload`, and
+`toggle` never download packages.
 
 ## Supported languages and tools
 
@@ -248,8 +261,10 @@ Application is per buffer. `setup()` creates one `mimic` `FileType` autocmd and
 then sweeps buffers that are already loaded, because `VeryLazy` fires after the
 first `FileType`. `:Mimic reload` reverts everything mimic changed, clears
 detection and resolution state, and applies again. `:Mimic toggle` off reverts;
-toggle on sweeps loaded buffers. Reverting stops only clients mimic created and
-restores only the conform and nvim-lint keys mimic wrote.
+toggle on sweeps loaded buffers. After a successful install, mimic reverts its
+own ledger and sweeps again without resetting your session enabled state.
+Reverting stops only clients mimic created and restores only the conform and
+nvim-lint keys mimic wrote.
 
 ## Override mode
 
@@ -321,22 +336,59 @@ per layer. It is invalidated on these events:
 There are no OS-level filesystem watchers. An external project change made
 while Neovim is focused is picked up on the next save, focus change, directory
 change, or `:Mimic reload`. A tool installed outside Neovim is picked up when
-focus returns or after `:Mimic reload`. Cache invalidation refreshes evidence
-only. Applying still happens on `FileType`, on `setup()` for loaded buffers,
-and on `reload` or `toggle`, so a changed project plan is not rewritten while
-you edit. Run `:Mimic reload` to apply a changed plan to open buffers.
+focus returns or after `:Mimic reload`. A successful `:Mimic install`
+invalidates availability and reapplies immediately. Cache invalidation alone
+refreshes evidence only. Applying still happens on `FileType`, on `setup()` for
+loaded buffers, on `reload` or `toggle`, and after an install, so a changed
+project plan is not rewritten while you edit. Run `:Mimic reload` to apply a
+changed plan to open buffers.
 
 `:Mimic status` reports hit, miss, and entry counts. `:checkhealth mimic`
 reports per-layer statistics and the invalidation events above.
+
+## Installer
+
+`:Mimic install` is the only command that can download language tools. It
+builds a proposal for the current buffer only:
+
+- It uses the same detection, availability, and resolution as `:Mimic status`.
+- It leaves every category that already has an owner alone. Override targets
+  and optional alternatives are not installed.
+- It simulates Mason availability, resolves again, and proposes only Mason
+  packages that would fill categories whose current action is `none`.
+- It deduplicates packages that cover more than one category. For example,
+  Ruff owns both Python lint and format.
+- It reports non-Mason tools as manual hints, including Clippy and rustfmt via
+  rustup, clang-tidy via LLVM, ESLint via project dependencies, jdtls via
+  nvim-jdtls, and checkstyle via project config.
+
+The proposal is built without loading Mason. `status` and `health` also show
+the proposal without initializing Mason, refreshing a registry, or downloading
+anything. Only after `ask` is confirmed, or when `install.mode = "auto"` is set
+for an explicit request, does mimic initialize Mason, refresh its registry, and
+install the proposed packages.
+
+Installation is best effort. Packages that are already installed or busy are
+skipped, failures are reported, and the Mason registry refresh error is shown
+without blocking cached packages. After at least one successful install, mimic
+invalidates cached availability, reverts its own formatter and linter ledger,
+and sweeps loaded buffers again. Reverting first is required so a newly
+installed formatter can replace an older formatter that mimic filled earlier.
+Mimic-owned LSP clients may restart during that reapply. Your own configuration
+and session enabled state are preserved.
+
+The installer does not install plugins, non-Mason tools, all languages at once,
+updates, uninstalls, or version pins. It has no language argument and keeps no
+persistent install state. Mason remains the owner of installed packages.
 
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
-| `:Mimic status` | Show setup state, session state (including the enabled override categories), integration availability, registry counts, cache counts, the current buffer's detection result, its resolution plan, and what mimic has applied, including any override and the owner it replaced. |
+| `:Mimic status` | Show setup state, session state (including the enabled override categories and install mode), integration availability, registry counts, cache counts, the current buffer's detection result, its resolution plan, installable Mason packages and manual hints, and what mimic has applied, including any override and the owner it replaced. |
 | `:Mimic toggle` | Enable or disable mimic for this session only. Turning off reverts everything mimic applied and clears cached evidence; turning on clears cached evidence and applies to loaded buffers again. |
 | `:Mimic reload` | Revert what mimic applied, clear cached evidence and session state, and reapply the original options. |
-| `:Mimic install` | Phase 8 placeholder. Downloads nothing. |
+| `:Mimic install` | Propose and install missing Mason packages for the current buffer, subject to `install.mode`. Never installs plugins or non-Mason tools. |
 
 Completion for subcommands is included.
 
@@ -347,10 +399,11 @@ Completion for subcommands is included.
 ```
 
 The check verifies the Neovim version, whether `setup()` has run, which
-integration points are present, whether override is enabled, whether the
-registry data is valid, whether detection works for the current buffer, the
-resulting plan, cache hit and miss counts, and how much the applier has changed,
-including active overrides. It never installs anything.
+integration points are present, whether override is enabled, the install mode,
+whether the registry data is valid, whether detection works for the current
+buffer, the resulting plan and install proposal, cache hit and miss counts, and
+how much the applier has changed, including active overrides. It never loads
+Mason and never installs anything.
 
 ## Development checks
 
@@ -433,6 +486,28 @@ NVIM_APPNAME=mimic-test nvim --headless \
   -l tests/resolve_integration.lua
 ```
 
+Clean profile installer spec. It uses fake adapters, so it loads no Mason
+module, refreshes no registry, and downloads nothing:
+
+```sh
+NVIM_APPNAME=mimic-test nvim --headless \
+  -u tests/minimal_init.lua \
+  -l tests/install_spec.lua
+```
+
+Installer integration check against the real Mason registry. It is read only
+and skips when Mason has no cached registry:
+
+```sh
+nvim --headless \
+  -u tests/minimal_init.lua \
+  --cmd 'set runtimepath+=$HOME/.local/share/nvim/lazy/mason.nvim' \
+  -l tests/install_integration.lua
+```
+
+The check uses the default profile so it can see Mason's cached registry. It
+never refreshes the registry and never installs a package.
+
 Clean profile smoke test, isolated from the main LazyVim config:
 
 ```sh
@@ -481,23 +556,31 @@ nvim --headless -u NONE \
   -c q
 ```
 
-The clean `NVIM_APPNAME=mimic-test` profile is the test bed for the applier,
-because the main config already covers many languages.
+The clean `NVIM_APPNAME=mimic-test` profile is the test bed for the applier and
+installer, because the main config already covers many languages.
 
 ## What mimic does not do
 
 - No LSP override. `override.lsp` is reserved and ignored, because global
   enablement and per-project decisions do not mix cleanly.
-- No installation. Missing tools are reported, never downloaded or run.
+- No background installation. Only an explicit `:Mimic install` can download,
+  and only after the configured confirmation rule.
+- No plugin installation. The installer only proposes Mason packages and
+  reports other tools as manual hints.
+- No non-Mason package managers. Clippy, rustfmt, and clang-tidy need rustup or
+  LLVM, ESLint needs project dependencies, and Java needs nvim-jdtls.
+- No all-language install, language argument, update, uninstall, or version
+  pinning. Mason remains the owner of installed packages.
+- No installation state persisted by mimic.
 - No project file parsing beyond existence checks and `package.json`
   dependency names.
 - No executable introspection. Availability checks the filesystem only, it does
   not ask rustup, pip, or any other tool what it has installed.
-- No Mason installation.
 - No OS-level filesystem watchers. Cached evidence is invalidated by Neovim
   events, `:Mimic reload`, and `:Mimic toggle`.
 - No automatic re-apply when evidence changes. Application happens on
-  `FileType`, on `setup()` for loaded buffers, and on `reload` or `toggle`.
+  `FileType`, on `setup()` for loaded buffers, on `reload` or `toggle`, and
+  after a successful install.
 - No persistent cache. Cached evidence lives only for the current session.
 - No user-defined tool registry. Override only chooses among registry tools, and
   a custom owner is kept.
