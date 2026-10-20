@@ -4,8 +4,12 @@
 --- Availability is checked through the filesystem only: project local binaries,
 --- PATH lookups, and the Mason package directory. No process is started, no
 --- package manager is loaded, and no network access happens.
+---
+--- Results are cached per language and root. Cached tables are shared and read
+--- only. External tool installs are picked up after cache invalidation.
 
 local Registry = require("mimic.registry")
+local Cache = require("mimic.cache")
 
 local M = {}
 
@@ -105,17 +109,21 @@ end
 ---@return table
 function M.analyze(language, root, env)
   env = resolve(env)
-  local result = {}
+  local key = language .. "\0" .. (root or "")
 
-  for _, category in ipairs(Registry.categories) do
-    for _, candidate in ipairs(Registry.candidates(language, category)) do
-      local id = candidate.tool.id
-      result[id] = result[id] or {}
-      result[id][category] = check(candidate.binding, root, env)
+  return Cache.fetch("availability", key, function()
+    local result = {}
+
+    for _, category in ipairs(Registry.categories) do
+      for _, candidate in ipairs(Registry.candidates(language, category)) do
+        local id = candidate.tool.id
+        result[id] = result[id] or {}
+        result[id][category] = check(candidate.binding, root, env)
+      end
     end
-  end
 
-  return result
+    return result
+  end)
 end
 
 return M
