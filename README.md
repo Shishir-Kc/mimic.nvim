@@ -16,6 +16,8 @@ always wins.
 > owner. It never installs plugins, never installs non-Mason tools, and never
 > downloads in the background.
 
+A practical, step-by-step usage guide lives in [USAGE.md](USAGE.md).
+
 ## Requirements
 
 - Neovim 0.11.3 or newer.
