@@ -155,7 +155,7 @@ mimic detects, resolves one owner per category, then applies:
 | --- | --- | --- |
 | `lsp` | Starts the LSP server it owns, once per buffer, via `vim.lsp.start` with an explicit project root. | Never uses `vim.lsp.enable`, so nothing is globally enabled. A running client with the same name and root is reused. If the server belongs to a provider plugin such as `rustaceanvim` or `nvim-jdtls`, mimic defers to that plugin instead of starting a second client. For Python, mimic sets `settings.python.pythonPath` from a project `.venv`, `venv`, or `virtualenv` — but only for clients mimic itself started. |
 | `format` | Writes the selected formatter into `conform.formatters_by_ft` for that filetype — but only if the filetype has **no** entry yet. | If formatting is owned by an LSP (jdtls, clangd), it writes `{ lsp_format = "fallback" }` instead. |
-| `lint` | Writes the selected linter into `lint.linters_by_ft` for that filetype — only if there is no entry yet. | If no nvim-lint trigger autocmd exists, mimic creates one for `BufReadPost`, `BufWritePost`, and `InsertLeave` so linting actually runs. |
+| `lint` | Writes the selected linter into `lint.linters_by_ft` for that filetype — only if there is no entry yet. | If no nvim-lint trigger autocmd exists, mimic creates one for `BufReadPost`, `BufWritePost`, and `InsertLeave` so linting actually runs. When the linter's binding asks for it (clippy), mimic also sets `ignore_exitcode` on the loaded linter definition — but only if you have not set that field yourself — and records the write for revert. |
 
 The golden rule: **keep beats select**. A category that is already owned
 (a running or enabled LSP server, a configured formatter or linter — even one
@@ -288,6 +288,11 @@ require("mimic").setup({ override = { format = true } })
 - **Rust**: rust-analyzer (LSP), clippy (lint), rustfmt (format). clippy and
   rustfmt are not Mason packages — install them with
   `rustup component add clippy rustfmt` and run `:Mimic reload` afterwards.
+  Two further clippy details: it only runs inside a cargo project (a `Cargo.toml`
+  at the detected project root), so a loose `main.rs` gets no linter at all
+  instead of a failing `cargo` call; and inside a project mimic marks the
+  clippy linter as tolerant of cargo's nonzero exit code, which nvim-lint
+  reports as `cargo exited with code: 101` whenever the crate fails to build.
 - **C / C++**: clangd (LSP), clang-tidy (lint, via LLVM) and clang-format
   (format). `c` and `cpp` are separate language keys and separate filetypes.
 - **Java**: jdtls needs the optional `nvim-jdtls` plugin; without it mimic
@@ -328,6 +333,8 @@ and detection reported a plan and proposal without errors.
 | A formatter/linter I configured is untouched | Fill-in behavior. | That is correct. Opt into `override` for `format` / `lint` (see section 7). |
 | Formatting does nothing | No keymap is bound to conform. | Use your existing keymap, e.g. `<leader>cf` on LazyVim, or `:lua require("conform").format()`. |
 | Linter does not run on save | Your config already defines its own nvim-lint trigger, so mimic did not create one. | Make sure your own autocmd calls `require("lint").try_lint()`. |
+| Rust buffer: plan says lint `none` with "requires Cargo.toml" | No cargo project at the detected root (e.g. a loose .rs file). `cargo clippy` cannot run without a manifest. | Open the buffer inside a cargo project, or configure a different linter yourself. |
+| nvim-lint warns `cargo exited with code: 101` inside a project | Your own config owns the clippy linter, so mimic did not patch it (it never overrides user settings). | Set `require("lint").linters.clippy.ignore_exitcode = true` yourself, or check whether the crate actually fails to build. |
 | An LSP I enabled is not started by mimic | Intentional: mimic never overrides LSP ownership. | Disable your own enablement for that server if you want mimic to own it. |
 | Java: no jdtls, plan can't select it | `nvim-jdtls` plugin missing, or jdtls not installed. | Add nvim-jdtls, install jdtls (Mason or manual), `:Mimic reload`. |
 | Newly installed tool (outside Neovim) not detected | Availability is cached per session, invalidated by events. | Run `:Mimic reload`, or refocus Neovim / save a file. |
