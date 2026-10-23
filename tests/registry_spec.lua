@@ -98,6 +98,11 @@ assert(rust_analyzer, "rust_analyzer tool exists")
 eq(rust_analyzer.categories.lsp.covers.lint, true, "rust_analyzer covers lint when configured")
 eq(contains(rust_analyzer.categories.lsp.provider_plugins, "rustaceanvim"), true, "rustaceanvim is a provider")
 
+local clippy = Registry.tool("clippy")
+assert(clippy, "clippy tool exists")
+eq(contains(clippy.requires_root, "Cargo.toml"), true, "clippy requires a cargo manifest")
+eq(clippy.categories.lint.ignore_exitcode, true, "clippy tolerates cargo's expected exit codes")
+
 local prettier = Registry.candidates("javascript", "format")
 eq(prettier[1] and prettier[1].tool.id, "prettier", "prettier is the first JavaScript formatter")
 

@@ -29,7 +29,7 @@ local function context(language, opts)
     enabled = opts.enabled ~= false,
     root = opts.root or "/proj",
     root_source = opts.root_source or "marker",
-    markers = {},
+    markers = opts.markers or {},
     files = opts.files or {},
     signals = opts.signals or {},
     packages = opts.packages or {},
@@ -325,6 +325,43 @@ eq(rust_plan.categories.lsp.owner, "rust_analyzer", "rust-analyzer owns the rust
 eq(rust_plan.categories.lint.action, "keep", "rust lint stays with the active LSP")
 eq(rust_plan.categories.lint.owner, "rust_analyzer", "rust lint owner is the LSP")
 eq(rust_plan.categories.lint.mechanism, "lsp", "rust lint mechanism is lsp")
+
+-- Required project root gates cargo-bound tools -----------------------------
+
+local clippy_tool = Registry.tool("clippy")
+eq(
+  Score.root_evidence(clippy_tool, context("rust")),
+  "needs root Cargo.toml",
+  "a missing required root is reported"
+)
+eq(Score.root_evidence(clippy_tool, context("rust", { markers = { "Cargo.toml" } })), nil, "a root marker satisfies")
+eq(
+  Score.root_evidence(clippy_tool, context("rust", { files = { ["Cargo.toml"] = "/proj/Cargo.toml" } })),
+  nil,
+  "a project file satisfies"
+)
+eq(Score.root_evidence(Registry.tool("rust_analyzer"), context("rust")), nil, "tools without requires_root pass")
+
+local cargo_plan = Resolve.plan(context("rust", {
+  availability = rust_availability,
+  markers = { "Cargo.toml" },
+}))
+eq(cargo_plan.categories.lint.action, "select", "a cargo project selects clippy for rust lint")
+eq(cargo_plan.categories.lint.owner, "clippy", "clippy owns rust lint in a cargo project")
+
+local projectless = Resolve.plan(context("rust", { availability = rust_availability }))
+eq(projectless.categories.lint.action, "none", "a projectless rust buffer selects no linter")
+local projectless_clippy = provider_by_id(projectless.categories.lint, "clippy")
+if projectless_clippy == nil then
+  error("clippy provider is missing from the projectless rust plan")
+end
+eq(projectless_clippy.eligible, false, "clippy is ineligible without a cargo project")
+eq(
+  table.concat(projectless_clippy.reasons, ", "):find("needs root Cargo%.toml") ~= nil,
+  true,
+  "the missing root is explained"
+)
+eq(projectless.categories.format.owner, "rustfmt", "rustfmt still formats projectless buffers")
 
 local c_availability = {
   clangd = { lsp = avail() },

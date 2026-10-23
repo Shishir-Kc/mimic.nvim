@@ -52,7 +52,7 @@ local function context(language, opts)
     filetype = language,
     files = opts.files or {},
     language = language,
-    markers = {},
+    markers = opts.markers or {},
     packages = opts.packages or {},
     root = "/project",
     root_source = "marker",
@@ -126,8 +126,13 @@ eq(#complete_python.manual, 0, "a complete plan has no manual hints")
 local rust = proposal("rust")
 eq(names(rust.packages), "rust-analyzer", "rust proposes the Mason LSP")
 local rust_manual = manual_by_tool(rust.manual)
-eq(rust_manual.clippy.reason, "provided by rustup", "clippy is a rustup hint")
+eq(rust_manual.clippy.reason, "requires Cargo.toml", "projectless clippy reports the cargo requirement")
 eq(rust_manual.rustfmt.reason, "provided by rustup", "rustfmt is a rustup hint")
+
+local cargo_rust = proposal("rust", { markers = { "Cargo.toml" } })
+eq(names(cargo_rust.packages), "rust-analyzer", "a cargo project still proposes the Mason LSP")
+local cargo_manual = manual_by_tool(cargo_rust.manual)
+eq(cargo_manual.clippy.reason, "provided by rustup", "clippy is a rustup hint inside a cargo project")
 
 local c = proposal("c")
 eq(names(c.packages), "clang-format,clangd", "c proposes clangd and clang-format")
