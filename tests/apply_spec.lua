@@ -255,7 +255,7 @@ eq(rechecked.status, "skipped", "the key is rechecked after requiring an integra
 --------------------------------------------------------------- lint
 
 local function lint_env(map, overrides)
-  local module = { linters_by_ft = map or {} }
+  local module = { linters_by_ft = map or {}, linters = { clippy = { cmd = "cargo", args = { "clippy" } } } }
   local env = {
     loaded = function(name)
       if name == "lint" then
@@ -306,6 +306,71 @@ local lenv4 = lint_env({}, {
 })
 eq(Lint.ensure_trigger(lenv4), false, "an existing nvim-lint trigger is respected")
 eq(State.trigger_created(), false, "no trigger is recorded when one exists")
+
+----------------------------------------------------------- definition patch
+
+State.reset()
+local penv, plint = lint_env({})
+local papplied = Lint.apply(entry("clippy", "select", "external", "lint"), context("rust"), penv)
+eq(papplied.status, "applied", "clippy is applied for rust")
+eq(plint.linters_by_ft.rust[1], "clippy", "clippy is written for rust")
+eq(plint.linters.clippy.ignore_exitcode, true, "the clippy definition tolerates cargo's exit codes")
+eq(#State.def_edits(), 1, "the definition write is recorded")
+eq(State.def_edits()[1].name, "clippy", "the recorded definition name")
+eq(State.def_edits()[1].field, "ignore_exitcode", "the recorded definition field")
+eq(State.lint_edits()[1].patched.status, "applied", "the lint ledger carries the patch summary")
+eq(papplied.patched.status, "applied", "the applied result reports the patch")
+eq(Lint.ensure_trigger(penv), true, "the trigger is created after the definition patch")
+
+Apply.revert(penv)
+eq(plint.linters_by_ft.rust, nil, "revert removes the written linter entry")
+eq(plint.linters.clippy.ignore_exitcode, nil, "revert restores the definition field")
+eq(#State.def_edits(), 0, "revert clears the definition ledger")
+
+State.reset()
+local ulint = { linters_by_ft = {}, linters = { clippy = { cmd = "cargo", ignore_exitcode = false } } }
+local uenv = {
+  loaded = function(name)
+    if name == "lint" then
+      return ulint
+    end
+    return nil
+  end,
+  require_module = function()
+    error("require_module should not be called when nvim-lint is loaded")
+  end,
+}
+local uapplied = Lint.apply(entry("clippy", "select", "external", "lint"), context("rust"), uenv)
+eq(uapplied.status, "applied", "the linter is still applied")
+eq(uapplied.patched.status, "kept", "the patch is kept when the user set the field")
+eq(uapplied.patched.reason, "user config", "the kept reason names the user")
+eq(ulint.linters.clippy.ignore_exitcode, false, "the user value is not overwritten")
+eq(State.lint_edits()[1].patched.status, "kept", "the lint ledger records the kept patch")
+eq(#State.def_edits(), 0, "a kept patch is not recorded in the ledger")
+
+State.reset()
+local dlint = { linters_by_ft = {}, linters = {} }
+local denv = {
+  loaded = function(name)
+    if name == "lint" then
+      return dlint
+    end
+    return nil
+  end,
+  require_module = function()
+    error("require_module should not be called when nvim-lint is loaded")
+  end,
+}
+local dapplied = Lint.apply(entry("clippy", "select", "external", "lint"), context("rust"), denv)
+eq(dapplied.status, "applied", "the linter is applied even without a definition")
+eq(dapplied.patched.status, "skipped", "a missing definition is skipped")
+eq(dapplied.patched.reason, "definition not found", "the skipped reason names the situation")
+
+State.reset()
+local lenv5 = lint_env({})
+Lint.apply(entry("ruff", "select", "external", "lint"), context("python"), lenv5)
+eq(#State.def_edits(), 0, "linters without ignore_exitcode patch nothing")
+eq(Lint.patch_definition({ linter = "ruff", ignore_exitcode = true }, lenv5).status, "skipped", "missing definitions skip")
 
 --------------------------------------------------------------- override
 
