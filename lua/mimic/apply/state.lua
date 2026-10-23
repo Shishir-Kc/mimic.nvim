@@ -14,6 +14,7 @@ local function fresh()
     clients = {},
     format_edits = {},
     lint_edits = {},
+    def_edits = {},
     deferred = {},
     skipped = {},
     trigger = false,
@@ -105,6 +106,30 @@ function M.lint_names(filetype)
     end
   end
   return {}
+end
+
+---Record a linter-definition field mimic set.
+---
+---Definition edits cover the loaded nvim-lint linter table, for example a
+---clippy definition that must tolerate cargo's expected nonzero exit codes.
+---Revert restores the exact previous field value.
+---
+---@param entry { name: string, field: string, previous: any }
+function M.upsert_def_edit(entry)
+  for index, edit in ipairs(state.def_edits) do
+    if edit.name == entry.name and edit.field == entry.field then
+      state.def_edits[index] = entry
+      return
+    end
+  end
+  state.def_edits[#state.def_edits + 1] = entry
+end
+
+---Return the linter-definition fields mimic set.
+---
+---@return { name: string, field: string, previous: any }[]
+function M.def_edits()
+  return state.def_edits
 end
 
 ---@param entry { category: string, owner: string, reason: string }

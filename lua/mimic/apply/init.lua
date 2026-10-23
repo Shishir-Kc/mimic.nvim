@@ -246,6 +246,16 @@ function M.revert(env)
     end
   end
 
+  for _, edit in ipairs(State.def_edits()) do
+    local lint = env.loaded("lint")
+    if lint and type(lint.linters) == "table" then
+      local definition = lint.linters[edit.name]
+      if type(definition) == "table" then
+        definition[edit.field] = edit.previous
+      end
+    end
+  end
+
   if State.trigger_created() then
     env.clear_lint_trigger()
   end

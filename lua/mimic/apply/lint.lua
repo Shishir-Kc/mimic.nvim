@@ -68,16 +68,67 @@ function M.apply(entry, context, env)
 
   local names = { binding.linter }
   local replaced = entry.previous and { owner = entry.previous.owner, label = entry.previous.label } or nil
+  local patched = M.patch_definition(binding, env)
   State.upsert_lint_edit({
     ft = filetype,
     previous = current,
     names = names,
     value = { binding.linter },
     replaced = replaced,
+    patched = patched,
   })
   map[filetype] = names
 
+  if patched then
+    return {
+      category = "lint",
+      owner = entry.owner,
+      status = "applied",
+      linters = names,
+      replaced = entry.previous,
+      patched = patched,
+    }
+  end
+
   return { category = "lint", owner = entry.owner, status = "applied", linters = names, replaced = entry.previous }
+end
+
+---Tolerate a linter's expected nonzero exit codes.
+---
+---Some linters exit nonzero under normal conditions. For example cargo
+---clippy exits 101 whenever the crate fails to build, which is a normal
+---editing state. nvim-lint warns on any nonzero exit unless the definition
+---sets `ignore_exitcode`. When the binding asks for it, mimic writes that
+---field into the loaded definition, but never over a value the user already
+---set. The write is recorded so revert restores the previous value.
+---
+---@param binding table lint binding from the registry
+---@param env table injectable Neovim access
+---@return table|nil patch summary, or nil when the binding does not ask
+function M.patch_definition(binding, env)
+  if binding.ignore_exitcode ~= true then
+    return nil
+  end
+
+  local name = binding.linter
+  local lint = load_lint(env)
+  if lint == nil or type(lint.linters) ~= "table" then
+    return { name = name, field = "ignore_exitcode", status = "skipped", reason = "definition not available" }
+  end
+
+  local definition = lint.linters[name]
+  if type(definition) ~= "table" then
+    return { name = name, field = "ignore_exitcode", status = "skipped", reason = "definition not found" }
+  end
+
+  local previous = definition.ignore_exitcode
+  if previous ~= nil then
+    return { name = name, field = "ignore_exitcode", status = "kept", reason = "user config" }
+  end
+
+  definition.ignore_exitcode = true
+  State.upsert_def_edit({ name = name, field = "ignore_exitcode", previous = nil })
+  return { name = name, field = "ignore_exitcode", status = "applied" }
 end
 
 ---Create a lint trigger when no nvim-lint trigger exists.
