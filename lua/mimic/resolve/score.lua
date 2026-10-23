@@ -92,6 +92,37 @@ function M.package_evidence(tool, context)
   return nil
 end
 
+---Return an explainable reason when a required root marker is absent.
+---
+---Some tools only work inside a project that carries a specific manifest, for
+---example clippy inside a cargo project. The check looks at the root markers
+---recorded for the detected root; a tool config file of the same name counts
+---too.
+---
+---@param tool table
+---@param context table
+---@return string|nil reason
+function M.root_evidence(tool, context)
+  for _, name in ipairs(tool.requires_root or {}) do
+    local markers = type(context.markers) == "table" and context.markers or {}
+    for _, marker in ipairs(markers) do
+      if marker == name then
+        return nil
+      end
+    end
+    local files = type(context.files) == "table" and context.files or {}
+    if files[name] then
+      return nil
+    end
+  end
+
+  local required = tool.requires_root
+  if type(required) == "table" and #required > 0 then
+    return "needs root " .. table.concat(required, ", ")
+  end
+  return nil
+end
+
 ---Look up availability for a provider.
 ---
 ---@param provider table
@@ -146,6 +177,12 @@ function M.score(provider, context, usage)
   if tool.requires_config and not config.any then
     eligible = false
     reasons[#reasons + 1] = "needs config"
+  end
+
+  local root_reason = M.root_evidence(tool, context)
+  if root_reason then
+    eligible = false
+    reasons[#reasons + 1] = root_reason
   end
 
   if config.dedicated then

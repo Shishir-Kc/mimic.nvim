@@ -107,20 +107,30 @@ local function manual_hint(category, entry)
 
   local tool = Registry.tool(provider.id)
   local binding = tool and tool.categories and tool.categories[category] or nil
-  local reason
 
-  if tool and tool.requires_config then
+  -- Prefer the resolver's own explanation when the recorded reasons say why
+  -- the tool was ineligible.
+  local reason
+  for _, item in ipairs(provider.reasons or {}) do
+    local root = item:match("^needs root (.+)$")
+    if root then
+      reason = "requires " .. root
+      break
+    end
+  end
+
+  if not reason and tool and tool.requires_config then
     reason = "requires project config"
-  elseif binding and binding.requires_plugin then
+  elseif not reason and binding and binding.requires_plugin then
     reason = "requires " .. binding.requires_plugin
-  elseif tool and tool.deprecated then
+  elseif not reason and tool and tool.deprecated then
     reason = "deprecated"
-  elseif binding and binding.provided_by then
+  elseif not reason and binding and binding.provided_by then
     reason = "provided by " .. (provided_by_labels[binding.provided_by] or binding.provided_by)
-  elseif binding and binding.mason then
+  elseif not reason and binding and binding.mason then
     reason = "requires project config or a plugin"
   else
-    reason = "install manually"
+    reason = reason or "install manually"
   end
 
   return {

@@ -210,6 +210,9 @@ local function validate_binding(errors, tool_id, language_id, category, binding)
     if not is_nonempty_string(binding.executable) then
       add_error(errors, "tool '%s' lint binding for %s has no executable", tool_id, language_id)
     end
+    if binding.ignore_exitcode ~= nil and type(binding.ignore_exitcode) ~= "boolean" then
+      add_error(errors, "tool '%s' lint binding for %s has invalid ignore_exitcode", tool_id, language_id)
+    end
   elseif category == "format" then
     if not is_string_list(binding.formatters) then
       add_error(errors, "tool '%s' format binding for %s has no formatters", tool_id, language_id)
@@ -252,6 +255,9 @@ local function validate_tools(errors, language_ids)
       end
       if tool.requires_config ~= nil and type(tool.requires_config) ~= "boolean" then
         add_error(errors, "tool '%s' has invalid requires_config", id)
+      end
+      if not is_optional_string_list(tool.requires_root) then
+        add_error(errors, "tool '%s' has invalid requires_root", id)
       end
       if tool.preferred_when_configured ~= nil and type(tool.preferred_when_configured) ~= "boolean" then
         add_error(errors, "tool '%s' has invalid preferred_when_configured", id)
