@@ -159,6 +159,14 @@ local function applied_lines(applied)
       if edit.replaced and edit.replaced.label then
         text = text .. " over " .. edit.replaced.label
       end
+      local patch = edit.patched
+      if patch and patch.status == "applied" then
+        text = text .. (", %s.%s set by mimic"):format(patch.name, patch.field)
+      elseif patch and patch.status == "kept" then
+        text = text .. (", %s.%s kept"):format(patch.name, patch.field)
+      elseif patch then
+        text = text .. (", %s.%s %s (%s)"):format(patch.name, patch.field, patch.status, patch.reason)
+      end
       parts[#parts + 1] = text
     end
     lines[#lines + 1] = ("  lint: %s"):format(table.concat(parts, ", "))

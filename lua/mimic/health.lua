@@ -187,6 +187,20 @@ function M.check()
       if overrides > 0 then
         health.ok(("overrides applied: %d"):format(overrides))
       end
+
+      local patches = {}
+      for _, edit in ipairs(applied.def_edits or {}) do
+        patches[#patches + 1] = ("%s.%s"):format(edit.name, edit.field)
+      end
+      for _, edit in ipairs(applied.lint_edits or {}) do
+        local patch = edit.patched
+        if patch and patch.status == "kept" then
+          patches[#patches + 1] = ("%s.%s kept (%s)"):format(patch.name, patch.field, patch.reason)
+        end
+      end
+      if #patches > 0 then
+        health.ok(("patched linter definitions: %s"):format(table.concat(patches, ", ")))
+      end
     end
   end
 
