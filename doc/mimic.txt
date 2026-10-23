@@ -189,7 +189,7 @@ Candidates per language:
                 Lint: ruff, flake8, pylint, mypy
                 Format: ruff, black
   Rust          LSP: rust-analyzer
-                Lint: clippy, rust-analyzer coverage
+                Lint: clippy (cargo project only), rust-analyzer coverage
                 Format: rustfmt
   C             LSP: clangd
                 Lint: clang-tidy, clangd coverage
@@ -280,9 +280,10 @@ Scoring adds to the registry priority for the category (0 to 100):
   - deprecated: -100 and ineligible
 
 A tool is ineligible when it is not installed, is deprecated, requires a
-missing plugin such as nvim-jdtls, or requires project config that is absent
-such as checkstyle. Ties break by registry order, priority then tool id, so the
-result is deterministic.
+missing plugin such as nvim-jdtls, requires project config that is absent
+such as checkstyle, or requires a project root that is absent, such as clippy
+needing a Cargo.toml at the detected root. Ties break by registry order,
+priority then tool id, so the result is deterministic.
 
 A config file is dedicated when few tools list it and shared when many do, for
 example package.json for every JavaScript tool. This is derived from the
@@ -320,6 +321,12 @@ Each category is handled differently:
            mimic creates one for BufReadPost, BufWritePost, and InsertLeave.
            With override, it replaces the existing entry and records the
            previous value.
+           When the linter binding asks for it, mimic also patches the loaded
+           linter definition: clippy sets ignore_exitcode, because cargo
+           clippy exits 101 on every save while the crate fails to build,
+           which nvim-lint would otherwise report as a warning. The patch only
+           fills a field you have not set yourself, and the previous value is
+           recorded so revert restores it.
 
 conform and nvim-lint are loaded on demand, and only when mimic owns that
 category. After requiring the plugin, mimic checks the filetype key again
@@ -435,7 +442,9 @@ builds a proposal for the current buffer only:
     Ruff owns both Python lint and format.
   - It reports non-Mason tools as manual hints. Clippy and rustfmt need rustup,
     clang-tidy needs LLVM, ESLint needs project dependencies, jdtls needs
-    nvim-jdtls, and checkstyle needs project config.
+    nvim-jdtls, and checkstyle needs project config. Clippy reports "requires
+    Cargo.toml" when the buffer has no cargo project, and "provided by rustup"
+    inside one.
 
 The proposal is built without loading Mason. status and health also show the
 proposal without initializing Mason, refreshing a registry, or downloading
