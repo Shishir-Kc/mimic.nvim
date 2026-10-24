@@ -96,6 +96,10 @@ With no arguments, the defaults below are used: >lua
       format = false,
     },
     install = { mode = "ask" },
+    completion = {
+      enabled = true,
+      autotrigger = true,
+    },
     languages = {
       python = true,
       rust = true,
@@ -122,6 +126,11 @@ Options: ~
                 prompts before downloading. never reports the proposal and
                 downloads nothing. auto skips the prompt for an explicit
                 install call. No mode installs in the background.
+  completion    Table with the enabled and autotrigger booleans. Fills in
+                Neovim's builtin completion for the servers mimic starts,
+                when the client attaches, but only when no nvim-cmp or
+                blink.cmp engine is loaded or installed. See
+                |mimic-completion|.
   languages     Per-language switches. `c` and `cpp` are separate keys.
   categories    Per-category switches for lsp, lint, and format.
   log_level     "trace", "debug", "info", "warn", or "error".
@@ -170,10 +179,11 @@ Run: >vim
 <
 The check verifies the Neovim version, whether setup() has run, which
 integration points are available, whether override is enabled, the install
-mode, whether the registry data is valid, whether detection works for the
-current buffer, the resulting plan and install proposal, cache hit and miss
-counts, and how much the applier has changed, including active overrides. It
-never loads Mason and never installs anything.
+mode, which completion engine is running (loaded or installed), whether the
+registry data is valid,
+whether detection works for the current buffer, the resulting plan and install
+proposal, cache hit and miss counts, and how much the applier has changed,
+including active overrides. It never loads Mason and never installs anything.
 
 ==============================================================================
 7. REGISTRY                                                  *mimic-registry*
@@ -231,8 +241,10 @@ For a buffer, detection reports:
     gradlew, and dependency names from package.json.
   - Existing configuration: active LSP clients, servers enabled or declared
     with vim.lsp, servers declared in LazyVim opts, formatters configured in
-    conform, linters configured in nvim-lint, and whether LSP formatting is
-    available. Each record carries source tags.
+    conform, linters configured in nvim-lint, whether LSP formatting is
+    available, and the completion engine (nvim-cmp, blink.cmp, or none),
+    including whether it was seen loaded or merely installed. Each record
+    carries source tags.
   - Tool availability: for every registry candidate, whether its executable is
     found in a project local directory, on PATH, or in the Mason package
     directory. Plugin requirements such as nvim-jdtls are checked too.
@@ -311,6 +323,9 @@ Each category is handled differently:
            client with the same name and root is reused. Servers owned by
            rustaceanvim or nvim-jdtls are deferred to those plugins. A
            table-shaped cmd is checked for a runnable executable first.
+           When no completion engine is running, mimic also enables builtin
+           completion on LspAttach for the client it owns. See
+           |mimic-completion|.
   format   When the filetype has no conform.formatters_by_ft entry, mimic
            writes the selected formatter list. When the resolved owner is an
            LSP formatter, it writes { lsp_format = "fallback" } instead. With
@@ -335,6 +350,33 @@ before writing, so a setup hook that already filled the key still wins.
 For Python, when mimic starts basedpyright or pyright, it sets
 settings.python.pythonPath from a project .venv, venv, or virtualenv. It does
 this only for clients it starts, never for servers the user manages.
+
+                                                              *mimic-completion*
+Builtin completion:~
+
+An LSP server only supplies completion items; a client engine must still
+request and render them.
+
+  - nvim-cmp or blink.cmp loaded, or merely installed (on the runtimepath, or
+    in lazy.nvim's plugin list): mimic enables nothing and the engine owns the popup. Detection reports the
+    engine and where it was seen (loaded or installed), and |:Mimic-status|
+    shows it in the buffer's existing line and in the applied section. The
+    installed check matters because engines load lazily, often on InsertEnter,
+    after mimic has already applied a buffer.
+  - No engine running: when a server mimic started attaches to a buffer, mimic
+    calls vim.lsp.completion.enable with autotrigger, so typing a trigger
+    character such as "." or ":" opens the builtin popup. Enablement happens
+    on LspAttach because capabilities are only known after initialization.
+    Set completion.autotrigger = false to keep the popup manual, or
+    completion.enabled = false to turn the fill-in off entirely.
+  - Only clients the applier ledger owns are touched. A server started
+    elsewhere keeps whatever its owner configured.
+  - Every enablement is recorded in the applier ledger and reverted by
+    |:Mimic-reload| and |:Mimic-toggle|.
+
+Suggestions also need content. rust-analyzer, for example, only offers
+auto-import entries for members of crates that are dependencies in Cargo.toml,
+so run `cargo add <crate>` and let the server index the workspace.
 
 Application is per buffer. setup() creates one mimic FileType autocmd and then
 sweeps buffers that are already loaded, because VeryLazy fires after the first
@@ -465,8 +507,9 @@ download packages.
 Installation is best effort. Packages that are already installed or busy are
 skipped, failures are reported, and a registry refresh error is shown without
 blocking cached packages. After at least one successful install, mimic
-invalidates cached availability, reverts its own formatter and linter ledger,
-and sweeps loaded buffers again. Reverting first lets a newly installed
+invalidates cached availability, reverts its own formatter, linter, and
+completion ledger, and sweeps loaded buffers again. Reverting first lets a
+newly installed
 formatter replace an older formatter that mimic filled earlier. Mimic-owned LSP
 clients may restart during that reapply. Your own configuration and session
 enabled state are preserved.

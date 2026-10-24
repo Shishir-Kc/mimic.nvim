@@ -83,6 +83,10 @@ The defaults are:
     format = false,
   },
   install = { mode = "ask" },
+  completion = {
+    enabled = true,
+    autotrigger = true,
+  },
   languages = {
     python = true,
     rust = true,
@@ -168,8 +172,10 @@ For a buffer, detection reports:
   `package.json`.
 - Existing configuration: active LSP clients, LSP servers enabled or declared
   with `vim.lsp`, LSP servers declared in LazyVim `opts`, formatters configured
-  in conform, linters configured in nvim-lint, and whether LSP formatting is
-  available. Each record is tagged with its source.
+  in conform, linters configured in nvim-lint, whether LSP formatting is
+  available, and the completion engine (`nvim-cmp`, `blink.cmp`, or none),
+  including whether it was seen loaded or merely installed. Each record is
+  tagged with its source.
 - Tool availability: for every registry candidate, whether its executable is
   found in a project local directory, on `PATH`, or in the Mason package
   directory. Plugin requirements such as `nvim-jdtls` are checked too.
@@ -323,6 +329,34 @@ previous value.
 Runtime enablement is indistinguishable from user configuration, so a tool that
 LazyVim enabled at runtime is reported as a user-level owner.
 
+## Completion
+
+An LSP server only supplies completion items; a client engine must still
+request and render them. mimic fills that gap, but only when no engine owns it:
+
+- With `nvim-cmp` or `blink.cmp` loaded, mimic enables nothing and defers to
+  the engine, so the two never fight over the same keystrokes. An engine that
+  is installed but not yet loaded counts too, because it could load at any
+  moment; mimic checks both the runtimepath and lazy.nvim's plugin list.
+  `:Mimic status` and `:checkhealth mimic` report the detected engine and
+  whether it was seen loaded or installed.
+- Without an engine, mimic enables Neovim's builtin completion when the servers
+  it starts attach to a buffer: `vim.lsp.completion.enable(true, client.id,
+  bufnr, { autotrigger = true })`. The enablement happens on `LspAttach`,
+  after the server has initialized, because that is when its capabilities are
+  known. Typing a trigger character such as `.` or `:` opens the popup.
+- `completion = { enabled = false }` turns the fill-in off completely, and
+  `completion = { autotrigger = false }` keeps the popup manual.
+- Manual `<C-x><C-o>` triggering needs `omnifunc` pointed at LSP completion;
+  mimic does not set buffer options for you.
+- Every enablement is recorded in the ledger and reverted by `:Mimic reload`
+  and `:Mimic toggle`.
+
+Suggestions also need something to suggest. rust-analyzer, for example, only
+offers auto-import entries such as `rand::random` for members of crates that
+are dependencies in `Cargo.toml`. Run `cargo add rand` first, then give the
+server a moment to index the workspace after it picks up the manifest.
+
 ## Caching
 
 Detection caches only filesystem evidence:
@@ -387,7 +421,8 @@ install the proposed packages.
 Installation is best effort. Packages that are already installed or busy are
 skipped, failures are reported, and the Mason registry refresh error is shown
 without blocking cached packages. After at least one successful install, mimic
-invalidates cached availability, reverts its own formatter and linter ledger,
+invalidates cached availability, reverts its own formatter, linter, and
+completion ledger,
 and sweeps loaded buffers again. Reverting first is required so a newly
 installed formatter can replace an older formatter that mimic filled earlier.
 Mimic-owned LSP clients may restart during that reapply. Your own configuration
@@ -401,7 +436,7 @@ persistent install state. Mason remains the owner of installed packages.
 
 | Command | Behavior |
 | --- | --- |
-| `:Mimic status` | Show setup state, session state (including the enabled override categories and install mode), integration availability, registry counts, cache counts, the current buffer's detection result, its resolution plan, installable Mason packages and manual hints, and what mimic has applied, including any override and the owner it replaced. |
+| `:Mimic status` | Show setup state, session state (including the enabled override categories and install mode), integration availability, registry counts, cache counts, the current buffer's detection result (including the detected completion engine), its resolution plan, installable Mason packages and manual hints, and what mimic has applied, including any override, the owner it replaced, and builtin completion mimic enabled. |
 | `:Mimic toggle` | Enable or disable mimic for this session only. Turning off reverts everything mimic applied and clears cached evidence; turning on clears cached evidence and applies to loaded buffers again. |
 | `:Mimic reload` | Revert what mimic applied, clear cached evidence and session state, and reapply the original options. |
 | `:Mimic install` | Propose and install missing Mason packages for the current buffer, subject to `install.mode`. Never installs plugins or non-Mason tools. |
@@ -416,10 +451,11 @@ Completion for subcommands is included.
 
 The check verifies the Neovim version, whether `setup()` has run, which
 integration points are present, whether override is enabled, the install mode,
-whether the registry data is valid, whether detection works for the current
-buffer, the resulting plan and install proposal, cache hit and miss counts, and
-how much the applier has changed, including active overrides. It never loads
-Mason and never installs anything.
+which completion engine is running (loaded or installed), whether the registry
+data is valid, whether
+detection works for the current buffer, the resulting plan and install
+proposal, cache hit and miss counts, and how much the applier has changed,
+including active overrides. It never loads Mason and never installs anything.
 
 ## Development checks
 
@@ -579,6 +615,10 @@ installer, because the main config already covers many languages.
 
 - No LSP override. `override.lsp` is reserved and ignored, because global
   enablement and per-project decisions do not mix cleanly.
+- No third-party completion engine. mimic defers to nvim-cmp or blink.cmp when
+  one is installed or loaded, and otherwise enables Neovim's builtin LSP
+  completion for the servers it starts, when they attach to a buffer. See
+  Completion.
 - No background installation. Only an explicit `:Mimic install` can download,
   and only after the configured confirmation rule.
 - No plugin installation. The installer only proposes Mason packages and

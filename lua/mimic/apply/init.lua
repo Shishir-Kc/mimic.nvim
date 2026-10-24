@@ -95,6 +95,26 @@ local function env_defaults()
     clear_lint_trigger = function()
       vim.api.nvim_create_augroup("mimic_lint", { clear = true })
     end,
+    completion_available = function()
+      return type(vim.lsp.completion) == "table" and type(vim.lsp.completion.enable) == "function"
+    end,
+    completion_enable = function(client_id, bufnr, opts)
+      local ok = pcall(vim.lsp.completion.enable, true, client_id, bufnr, opts)
+      return ok
+    end,
+    completion_disable = function(client_id, bufnr)
+      pcall(vim.lsp.completion.enable, false, client_id, bufnr)
+    end,
+    lazy_plugin = function(name)
+      local ok, config = pcall(require, "lazy.core.config")
+      if not ok or type(config) ~= "table" or type(config.plugins) ~= "table" then
+        return false
+      end
+      return config.plugins[name] ~= nil
+    end,
+    completion_engine = function()
+      return require("mimic.detect.existing").completion()
+    end,
     detect = function(bufnr, config)
       return Detect.context(bufnr, { config = config })
     end,
@@ -119,8 +139,9 @@ end
 ---@param context table Detection context.
 ---@param plan table Resolved plan.
 ---@param env table|nil Injectable Neovim access.
+---@param config table|nil Resolved mimic config, used for the completion fill-in.
 ---@return table|nil
-function M.apply(bufnr, context, plan, env)
+function M.apply(bufnr, context, plan, env, config)
   env = resolve(env)
   if type(plan) ~= "table" or not plan.analyzed then
     return nil
@@ -133,7 +154,7 @@ function M.apply(bufnr, context, plan, env)
     categories = {},
   }
 
-  result.categories.lsp = Lsp.apply(plan.categories.lsp, context, env)
+  result.categories.lsp = Lsp.apply(plan.categories.lsp, context, env, config)
   result.categories.format = Format.apply(plan.categories.format, context, env)
   result.categories.lint = Lint.apply(plan.categories.lint, context, env)
 
@@ -163,7 +184,7 @@ function M.apply_buffer(bufnr, config, env)
     return nil
   end
 
-  return M.apply(bufnr, context, plan, env)
+  return M.apply(bufnr, context, plan, env, config)
 end
 
 ---Apply to every loaded file-backed buffer.
@@ -203,7 +224,11 @@ function M.reapply(config, env)
   return M.sweep(config, env)
 end
 
----Create the FileType autocmd that applies mimic per buffer.
+---Create the FileType and LspAttach autocmds that apply mimic.
+---
+---FileType drives per-buffer apply. LspAttach fills in builtin completion
+---after a client has initialized, because capabilities are only then known
+---and the attach always names the buffer.
 ---
 ---@param env table|nil
 function M.setup_autocmds(env)
@@ -220,6 +245,19 @@ function M.setup_autocmds(env)
         return
       end
       M.apply_buffer(args.buf, mimic.config)
+    end,
+  })
+  env.create_autocmd("LspAttach", {
+    group = M._autocmd_group,
+    callback = function(args)
+      local mimic = require("mimic")
+      if not mimic._did_setup or not mimic.is_enabled() then
+        return
+      end
+      if type(args.data) ~= "table" or type(args.data.client_id) ~= "number" then
+        return
+      end
+      Lsp.enable_completion(args.buf, args.data.client_id, mimic.config, resolve(env))
     end,
   })
 end
@@ -254,6 +292,10 @@ function M.revert(env)
         definition[edit.field] = edit.previous
       end
     end
+  end
+
+  for _, edit in ipairs(State.completion_edits()) do
+    env.completion_disable(edit.client_id, edit.bufnr)
   end
 
   if State.trigger_created() then

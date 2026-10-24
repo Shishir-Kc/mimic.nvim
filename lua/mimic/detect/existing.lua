@@ -8,6 +8,27 @@
 
 local Registry = require("mimic.registry")
 
+-- Completion rendering engines. The applier enables Neovim's builtin
+-- completion only when none of these is running. An installed engine counts
+-- even while it is not loaded, because it could load at any moment: the
+-- presence is checked on the runtimepath and, for fresh lazy.nvim sessions,
+-- in lazy's plugin list. Engines such as nvim-cmp load on InsertEnter, after
+-- the applier has already seen its buffers.
+local completion_engines = {
+  {
+    module = "cmp",
+    files = { "lua/cmp.lua", "lua/cmp/init.lua" },
+    plugin = "nvim-cmp",
+    label = "nvim-cmp",
+  },
+  {
+    module = "blink.cmp",
+    files = { "lua/blink/cmp.lua", "lua/blink/cmp/init.lua" },
+    plugin = "blink.cmp",
+    label = "blink.cmp",
+  },
+}
+
 local M = {}
 
 local defaults = {
@@ -54,8 +75,21 @@ local defaults = {
   mimic_state = function()
     return package.loaded["mimic.apply.state"]
   end,
+  loaded = function(name)
+    return package.loaded[name]
+  end,
   executable = function(exe)
     return vim.fn.executable(exe) == 1
+  end,
+  has_runtime_file = function(name)
+    return #vim.api.nvim_get_runtime_file(name, false) > 0
+  end,
+  lazy_plugin = function(name)
+    local ok, config = pcall(require, "lazy.core.config")
+    if not ok or type(config) ~= "table" or type(config.plugins) ~= "table" then
+      return false
+    end
+    return config.plugins[name] ~= nil
   end,
 }
 
@@ -400,6 +434,37 @@ function M.lint(source, language, env)
   return result
 end
 
+---Detect the completion engine present in this session.
+---
+---Completion rendering belongs to a dedicated engine such as nvim-cmp or
+---blink.cmp. The applier fills in Neovim's builtin completion only when no
+---engine is running. An installed engine counts even while it is not loaded,
+---because it could load at any moment and the fill-in must not fight it. This
+---is session runtime state and never cached.
+---
+---@return { engine: string|nil, source: string|nil }
+function M.completion(env)
+  env = resolve(env)
+  for _, engine in ipairs(completion_engines) do
+    if env.loaded(engine.module) ~= nil then
+      return { engine = engine.label, source = "runtime" }
+    end
+  end
+  for _, engine in ipairs(completion_engines) do
+    for _, file in ipairs(engine.files) do
+      if env.has_runtime_file(file) then
+        return { engine = engine.label, source = "installed" }
+      end
+    end
+  end
+  for _, engine in ipairs(completion_engines) do
+    if env.lazy_plugin(engine.plugin) then
+      return { engine = engine.label, source = "installed" }
+    end
+  end
+  return { engine = nil, source = nil }
+end
+
 ---An empty existing configuration record.
 ---
 ---@return table
@@ -417,6 +482,7 @@ function M.empty()
       available = {},
       sources = {},
     },
+    completion = { engine = nil, source = nil },
   }
 end
 
@@ -431,6 +497,7 @@ function M.analyze(source, language, env)
     lsp = M.lsp(source, language, env),
     format = M.format(source, language, env),
     lint = M.lint(source, language, env),
+    completion = M.completion(env),
   }
 end
 

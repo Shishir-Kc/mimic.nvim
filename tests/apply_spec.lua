@@ -62,6 +62,25 @@ local function lsp_env(overrides)
     start = function()
       return 7
     end,
+    completion_available = function()
+      return true
+    end,
+    completion_enable = function()
+      return true
+    end,
+    completion_disable = function()
+      return true
+    end,
+    completion_engine = function()
+      return { engine = nil, source = nil }
+    end,
+    get_client_by_id = function(id)
+      return {
+        id = id,
+        name = "rust_analyzer",
+        server_capabilities = { completionProvider = { triggerCharacters = { ":" } } },
+      }
+    end,
   }
   return vim.tbl_extend("force", env, overrides or {})
 end
@@ -185,6 +204,184 @@ eq(failed.reason:find("start failed") ~= nil, true, "start failure reason is rep
 State.reset()
 local unknown = Lsp.apply(entry("does_not_exist"), context("python"), lsp_env())
 eq(unknown.status, "skipped", "unknown tool is skipped")
+
+--------------------------------------------------------------- completion
+
+-- Apply starts the client but never touches completion: right after a start
+-- the client is still initializing and its capabilities are unknown. The
+-- fill-in happens at attach time.
+State.reset()
+local enabled_calls = {}
+local capplied = Lsp.apply(
+  entry("rust_analyzer"),
+  context("rust"),
+  lsp_env({
+    get_client_by_id = function(id)
+      return { id = id, name = "rust_analyzer", server_capabilities = {} }
+    end,
+  }),
+  { completion = { enabled = true, autotrigger = true } }
+)
+eq(capplied.status, "applied", "lsp applies while the client is initializing")
+eq(capplied.completion, nil, "apply does not touch completion before capabilities are known")
+eq(#State.completion_edits(), 0, "apply records no completion edit")
+
+-- Attach: capabilities are negotiated, so builtin completion fills in.
+local initialized_env = function()
+  return lsp_env({
+    completion_enable = function(client_id, bufnr, opts)
+      enabled_calls[#enabled_calls + 1] = { client_id = client_id, bufnr = bufnr, autotrigger = opts.autotrigger }
+      return true
+    end,
+  })
+end
+local attached = Lsp.enable_completion(1, 7, { completion = { enabled = true, autotrigger = true } }, initialized_env())
+eq(attached.status, "enabled", "builtin completion is enabled for the owned client at attach")
+eq(attached.autotrigger, true, "autotrigger follows the option")
+eq(#enabled_calls, 1, "completion is enabled once")
+eq(enabled_calls[1].client_id, 7, "completion uses the started client")
+eq(enabled_calls[1].bufnr, 1, "completion is scoped to the buffer")
+eq(enabled_calls[1].autotrigger, true, "autotrigger is passed through")
+eq(#State.completion_edits(), 1, "the completion write is recorded")
+eq(State.completion_edits()[1].client_id, 7, "the ledger records the client")
+eq(State.completion_edits()[1].bufnr, 1, "the ledger records the buffer")
+eq(State.completion_edits()[1].autotrigger, true, "the ledger records autotrigger")
+
+Lsp.enable_completion(1, 7, { completion = { enabled = true, autotrigger = true } }, initialized_env())
+eq(#State.completion_edits(), 1, "a repeated attach on the same buffer is upserted")
+
+Lsp.enable_completion(2, 7, { completion = { enabled = true, autotrigger = true } }, initialized_env())
+eq(#State.completion_edits(), 2, "a second buffer adds its own completion edit")
+
+local disable_calls = {}
+Apply.revert({
+  completion_disable = function(client_id, bufnr)
+    disable_calls[#disable_calls + 1] = { client_id = client_id, bufnr = bufnr }
+  end,
+  get_client_by_id = function()
+    return nil
+  end,
+})
+eq(#disable_calls, 2, "revert disables every recorded completion")
+eq(disable_calls[1].client_id, 7, "revert disables the recorded client")
+eq(disable_calls[1].bufnr, 1, "revert disables the first recorded buffer")
+eq(disable_calls[2].client_id, 7, "revert disables every recorded client")
+eq(disable_calls[2].bufnr, 2, "revert disables the second recorded buffer")
+eq(#State.completion_edits(), 0, "revert clears the completion ledger")
+
+State.reset()
+local manual_calls = 0
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local manual = Lsp.enable_completion(
+  1,
+  7,
+  { completion = { enabled = true, autotrigger = false } },
+  lsp_env({
+    completion_enable = function()
+      manual_calls = manual_calls + 1
+      return true
+    end,
+  })
+)
+eq(manual.status, "enabled", "completion applies without autotrigger")
+eq(manual.autotrigger, false, "autotrigger can be disabled")
+eq(manual_calls, 1, "completion is still enabled without autotrigger")
+
+State.reset()
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local eapplied = Lsp.enable_completion(
+  1,
+  7,
+  { completion = { enabled = true, autotrigger = true } },
+  lsp_env({
+    completion_engine = function()
+      return { engine = "nvim-cmp", source = "runtime" }
+    end,
+  })
+)
+eq(eapplied.status, "skipped", "a loaded completion engine wins")
+eq(eapplied.reason:find("nvim-cmp", 1, true) ~= nil, true, "the skip reason names the engine")
+eq(eapplied.reason:find("present", 1, true) ~= nil, true, "the loaded engine is called present")
+eq(#State.completion_edits(), 0, "no completion edit is recorded for the engine case")
+eq(State.skipped()[1].owner, "rust_analyzer", "the skip records the registry owner")
+
+State.reset()
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local iapplied = Lsp.enable_completion(
+  1,
+  7,
+  { completion = { enabled = true, autotrigger = true } },
+  lsp_env({
+    completion_engine = function()
+      return { engine = "blink.cmp", source = "installed" }
+    end,
+  })
+)
+eq(iapplied.status, "skipped", "an installed completion engine also wins before it loads")
+eq(
+  iapplied.reason:find("engine installed (blink.cmp)", 1, true) ~= nil,
+  true,
+  "the installed engine is called installed"
+)
+eq(#State.completion_edits(), 0, "no completion edit is recorded for the installed engine case")
+
+-- The fill-in only touches clients mimic started. A client from another
+-- source keeps whatever its owner configured.
+State.reset()
+local foreign_calls = 0
+local foreign = Lsp.enable_completion(
+  1,
+  42,
+  { completion = { enabled = true, autotrigger = true } },
+  lsp_env({
+    completion_enable = function()
+      foreign_calls = foreign_calls + 1
+      return true
+    end,
+  })
+)
+eq(foreign, nil, "completion fill-in ignores clients mimic does not own")
+eq(foreign_calls, 0, "nothing is enabled for a foreign client")
+eq(#State.completion_edits(), 0, "no ledger entry for a foreign client")
+
+State.reset()
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local dcpplied = Lsp.enable_completion(1, 7, { completion = { enabled = false } }, lsp_env())
+eq(dcpplied.status, "skipped", "completion can be disabled")
+eq(dcpplied.reason, "completion disabled", "the disabled reason")
+eq(#State.completion_edits(), 0, "a disabled completion writes nothing")
+
+State.reset()
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local no_capability = Lsp.enable_completion(
+  1,
+  7,
+  { completion = { enabled = true, autotrigger = true } },
+  lsp_env({
+    get_client_by_id = function(id)
+      return { id = id, name = "rust_analyzer", server_capabilities = {} }
+    end,
+  })
+)
+eq(no_capability.status, "skipped", "servers without completionProvider are skipped")
+eq(no_capability.reason, "server provides no completion", "the capability skip reason")
+eq(#State.completion_edits(), 0, "no completion edit is recorded without the capability")
+
+State.reset()
+Lsp.apply(entry("rust_analyzer"), context("rust"), lsp_env(), {})
+local unavailable = Lsp.enable_completion(
+  1,
+  7,
+  { completion = { enabled = true, autotrigger = true } },
+  lsp_env({
+    completion_available = function()
+      return false
+    end,
+  })
+)
+eq(unavailable.status, "deferred", "a missing builtin completion defers")
+eq(unavailable.reason, "builtin completion not available", "the deferred reason")
+eq(#State.completion_edits(), 0, "no completion edit is recorded when deferred")
 
 --------------------------------------------------------------- format
 

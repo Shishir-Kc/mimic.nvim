@@ -43,6 +43,16 @@ function M.check()
   local install_mode = mimic.config and mimic.config.install and mimic.config.install.mode or "ask"
   health.ok(("install mode: %s"):format(install_mode))
 
+  local engine = require("mimic.detect.existing").completion()
+  if engine and engine.engine then
+    local tag = engine.source == "installed" and "installed" or "loaded"
+    health.info(
+      ("completion engine: %s (%s); builtin completion is left to it"):format(engine.engine, tag)
+    )
+  else
+    health.info("completion engine: none found; mimic enables builtin LSP completion for the servers it owns")
+  end
+
   local loaded, Registry = pcall(require, "mimic.registry")
   if not loaded then
     health.error("registry failed to load", { tostring(Registry) })
@@ -200,6 +210,14 @@ function M.check()
       end
       if #patches > 0 then
         health.ok(("patched linter definitions: %s"):format(table.concat(patches, ", ")))
+      end
+
+      if #applied.completion_edits > 0 then
+        local parts = {}
+        for _, edit in ipairs(applied.completion_edits) do
+          parts[#parts + 1] = ("client %d in buffer %d"):format(edit.client_id, edit.bufnr)
+        end
+        health.ok(("completion enabled by mimic: %s"):format(table.concat(parts, ", ")))
       end
     end
   end

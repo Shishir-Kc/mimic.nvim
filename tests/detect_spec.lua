@@ -248,6 +248,77 @@ eq(vim.tbl_contains(lazyvim_lsp.sources.rust_analyzer, "lazyvim"), true, "lazyvi
 local empty_existing = Existing.empty()
 eq(type(empty_existing.lsp.active), "table", "empty existing has lsp table")
 eq(empty_existing.format.lsp, false, "empty existing disables lsp formatting")
+eq(type(empty_existing.completion), "table", "empty existing has a completion record")
+
+-- Completion engine ---------------------------------------------------------
+
+local no_engine_env = {
+  loaded = function()
+    return nil
+  end,
+  has_runtime_file = function()
+    return false
+  end,
+}
+local no_engine = Existing.completion(no_engine_env)
+eq(no_engine.engine, nil, "no engine when none is loaded")
+eq(no_engine.source, nil, "no engine source when none is present")
+
+local cmp_env = {
+  loaded = function(name)
+    return name == "cmp" and { register_source = true } or nil
+  end,
+}
+eq(Existing.completion(cmp_env).engine, "nvim-cmp", "nvim-cmp is detected when loaded")
+eq(Existing.completion(cmp_env).source, "runtime", "engine source tag")
+
+local blink_env = {
+  loaded = function(name)
+    return name == "blink.cmp" and { setup = true } or nil
+  end,
+}
+eq(Existing.completion(blink_env).engine, "blink.cmp", "blink.cmp is detected when loaded")
+
+-- An installed engine counts before it is loaded: it can load at any moment
+-- during the session and the builtin fill-in must not fight it. Presence is
+-- visible on the runtimepath and in lazy's plugin list.
+local installed_cmp_env = {
+  loaded = function()
+    return nil
+  end,
+  has_runtime_file = function(name)
+    return name == "lua/cmp.lua" or name == "lua/cmp/init.lua"
+  end,
+}
+eq(Existing.completion(installed_cmp_env).engine, "nvim-cmp", "an installed nvim-cmp is detected")
+eq(Existing.completion(installed_cmp_env).source, "installed", "the installed engine source tag")
+
+local lazy_cmp_env = {
+  loaded = function()
+    return nil
+  end,
+  has_runtime_file = function()
+    return false
+  end,
+  lazy_plugin = function(name)
+    return name == "nvim-cmp"
+  end,
+}
+eq(Existing.completion(lazy_cmp_env).engine, "nvim-cmp", "nvim-cmp is detected through lazy")
+eq(Existing.completion(lazy_cmp_env).source, "installed", "the lazy-detected engine source tag")
+
+local disabled_env = {
+  loaded = function()
+    return nil
+  end,
+  has_runtime_file = function()
+    return false
+  end,
+  lazy_plugin = function()
+    return false
+  end,
+}
+eq(Existing.completion(disabled_env).engine, nil, "a disabled plugin spec is not an engine")
 
 -- Availability --------------------------------------------------------------
 
@@ -307,6 +378,7 @@ eq(context.enabled, true, "context enabled")
 eq(context.root, root, "context root")
 eq(context.root_source, "pyproject.toml", "context root source")
 eq(type(context.existing.lsp.active), "table", "context existing lsp table")
+eq(type(context.existing.completion), "table", "context existing completion record")
 eq(type(context.availability.ruff), "table", "context availability table")
 eq(context.availability.ruff.lint ~= nil, true, "context availability per category")
 

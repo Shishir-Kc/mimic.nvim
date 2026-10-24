@@ -15,6 +15,7 @@ local function fresh()
     format_edits = {},
     lint_edits = {},
     def_edits = {},
+    completion_edits = {},
     deferred = {},
     skipped = {},
     trigger = false,
@@ -130,6 +131,27 @@ end
 ---@return { name: string, field: string, previous: any }[]
 function M.def_edits()
   return state.def_edits
+end
+
+---Record builtin completion mimic enabled.
+---
+---Completion enablement is per client id and buffer number so revert can turn
+---off exactly what mimic turned on. The same pair is recorded only once.
+---
+---@param entry { client_id: integer, bufnr: integer, autotrigger: boolean }
+function M.upsert_completion_edit(entry)
+  for index, edit in ipairs(state.completion_edits) do
+    if edit.client_id == entry.client_id and edit.bufnr == entry.bufnr then
+      state.completion_edits[index] = entry
+      return
+    end
+  end
+  state.completion_edits[#state.completion_edits + 1] = entry
+end
+
+---@return { client_id: integer, bufnr: integer, autotrigger: boolean }[]
+function M.completion_edits()
+  return state.completion_edits
 end
 
 ---@param entry { category: string, owner: string, reason: string }

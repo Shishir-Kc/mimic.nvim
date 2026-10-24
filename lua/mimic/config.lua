@@ -15,6 +15,10 @@ M.defaults = {
     format = false,
   },
   install = { mode = "ask" },
+  completion = {
+    enabled = true,
+    autotrigger = true,
+  },
   languages = {
     python = true,
     rust = true,
@@ -152,6 +156,42 @@ local function apply_override(resolved, value, warnings)
   end
 end
 
+local completion_keys = { enabled = true, autotrigger = true }
+
+local function apply_completion(resolved, value, warnings)
+  if value == nil then
+    return
+  end
+
+  if type(value) ~= "table" then
+    warn(warnings, "option 'completion' must be a table, keeping defaults")
+    return
+  end
+
+  local unknown = {}
+  for key in pairs(value) do
+    local name = tostring(key)
+    if not completion_keys[name] then
+      unknown[#unknown + 1] = name
+    end
+  end
+  if #unknown > 0 then
+    table.sort(unknown)
+    warn(warnings, "unknown completion option%s %s ignored", #unknown == 1 and "" or "s", table.concat(unknown, ", "))
+  end
+
+  for _, key in ipairs({ "enabled", "autotrigger" }) do
+    local enabled = value[key]
+    if enabled ~= nil then
+      if type(enabled) ~= "boolean" then
+        warn(warnings, "completion.%s must be a boolean, keeping %s", key, tostring(resolved.completion[key]))
+      else
+        resolved.completion[key] = enabled
+      end
+    end
+  end
+end
+
 ---Resolve user options against the defaults.
 ---
 ---Unknown keys are ignored and reported once through the returned warnings.
@@ -186,6 +226,7 @@ function M.resolve(user)
 
   apply_boolean(resolved, user, "enabled", warnings)
   apply_override(resolved, user.override, warnings)
+  apply_completion(resolved, user.completion, warnings)
 
   if user.install ~= nil then
     if type(user.install) ~= "table" then

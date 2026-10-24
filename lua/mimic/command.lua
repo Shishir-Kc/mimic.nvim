@@ -62,11 +62,16 @@ local function context_lines(context)
     local source = context.root_source and (" [" .. context.root_source .. "]") or ""
     lines[#lines + 1] = ("Buffer: %s (%s)%s%s"):format(context.language, context.filetype or "?", root, source)
     local existing = context.existing
-    lines[#lines + 1] = ("  existing: lsp active=%s enabled=%s; format=%s; lint=%s"):format(
+    local display = existing.completion and existing.completion.engine
+    if display and existing.completion.source then
+      display = display .. " (" .. existing.completion.source .. ")"
+    end
+    lines[#lines + 1] = ("  existing: lsp active=%s enabled=%s; format=%s; lint=%s; completion=%s"):format(
       join_or_none(existing.lsp.active),
       join_or_none(existing.lsp.enabled),
       join_or_none(existing.format.configured),
-      join_or_none(existing.lint.configured)
+      join_or_none(existing.lint.configured),
+      display or "none"
     )
   else
     lines[#lines + 1] = ("Buffer: %s"):format(context.reason or "unsupported")
@@ -174,6 +179,16 @@ local function applied_lines(applied)
 
   if applied.trigger then
     lines[#lines + 1] = "  lint trigger: created by mimic"
+  end
+
+  local completion_edits = applied.completion_edits or {}
+  if #completion_edits > 0 then
+    local names = {}
+    for _, edit in ipairs(completion_edits) do
+      names[#names + 1] =
+        ("client %d in buffer %d%s"):format(edit.client_id, edit.bufnr, edit.autotrigger and " (autotrigger)" or "")
+    end
+    lines[#lines + 1] = ("  completion: %s"):format(table.concat(names, ", "))
   end
 
   for _, item in ipairs(applied.deferred or {}) do

@@ -156,6 +156,7 @@ mimic detects, resolves one owner per category, then applies:
 | `lsp` | Starts the LSP server it owns, once per buffer, via `vim.lsp.start` with an explicit project root. | Never uses `vim.lsp.enable`, so nothing is globally enabled. A running client with the same name and root is reused. If the server belongs to a provider plugin such as `rustaceanvim` or `nvim-jdtls`, mimic defers to that plugin instead of starting a second client. For Python, mimic sets `settings.python.pythonPath` from a project `.venv`, `venv`, or `virtualenv` — but only for clients mimic itself started. |
 | `format` | Writes the selected formatter into `conform.formatters_by_ft` for that filetype — but only if the filetype has **no** entry yet. | If formatting is owned by an LSP (jdtls, clangd), it writes `{ lsp_format = "fallback" }` instead. |
 | `lint` | Writes the selected linter into `lint.linters_by_ft` for that filetype — only if there is no entry yet. | If no nvim-lint trigger autocmd exists, mimic creates one for `BufReadPost`, `BufWritePost`, and `InsertLeave` so linting actually runs. When the linter's binding asks for it (clippy), mimic also sets `ignore_exitcode` on the loaded linter definition — but only if you have not set that field yourself — and records the write for revert. |
+| `completion` | When **no** completion engine (`nvim-cmp`, `blink.cmp`) is loaded **or installed** (runtimepath or lazy.nvim's plugin list), enables Neovim's builtin `vim.lsp.completion` (autotrigger) on `LspAttach` for every server mimic starts. The installed check matters because an engine can load at any later moment, and the attach timing matters because capabilities are only known after initialization. Nothing is enabled when an engine already runs, so the two never double-trigger; `:Mimic reload` disables what mimic enabled. Auto-import suggestions still need the dependency in your project manifest, e.g. `cargo add rand` for `rand::…`. |
 
 The golden rule: **keep beats select**. A category that is already owned
 (a running or enabled LSP server, a configured formatter or linter — even one
@@ -180,6 +181,24 @@ Everything mimic changes is reversible: `:Mimic reload` and `:Mimic toggle` off
 stop only the clients mimic created and restore only the conform / nvim-lint
 entries mimic wrote.
 
+### Code completion, suggestions, and auto-imports
+
+"Starting the LSP server" and "showing suggestions" are two different jobs.
+mimic does the first; the second belongs to a completion engine:
+
+- **You use nvim-cmp or blink.cmp** → mimic enables nothing; the popup comes
+  from that engine. An engine that is installed but not loaded yet counts too,
+  because it can appear at any moment. Make sure its `lsp` (or `nvim_lsp`)
+  source is in `sources` and run `:CmpStatus` to check it.
+- **You use neither** → mimic enables Neovim's builtin completion when the
+  servers it starts attach to a buffer (after initialization, when capabilities
+  are negotiated). Typing a trigger character (`.`, `:`, `"`, `=`) opens the
+  popup. Turn the fill-in off with `completion = { enabled = false }`.
+- **rust-analyzer shows no `rand::…` entries** → that is not a client problem:
+  auto-import suggestions only list members of crates that are dependencies in
+  `Cargo.toml`. Run `cargo add rand` (then save) and give the server time to
+  index; `:Mimic status` shows whether the client is attached.
+
 ---
 
 ## 6. Configuration cookbook
@@ -195,6 +214,10 @@ require("mimic").setup({
     format = false,
   },
   install = { mode = "ask" },              -- "ask" | "never" | "auto"
+  completion = {                           -- fill-in for builtin LSP completion
+    enabled = true,                        -- inert when nvim-cmp/blink.cmp loads
+    autotrigger = true,                    -- popup opens on `.`, `:`, ...
+  },
   languages = {                            -- every language is on by default
     python = true,
     rust = true,
@@ -333,6 +356,7 @@ and detection reported a plan and proposal without errors.
 | A formatter/linter I configured is untouched | Fill-in behavior. | That is correct. Opt into `override` for `format` / `lint` (see section 7). |
 | Formatting does nothing | No keymap is bound to conform. | Use your existing keymap, e.g. `<leader>cf` on LazyVim, or `:lua require("conform").format()`. |
 | Linter does not run on save | Your config already defines its own nvim-lint trigger, so mimic did not create one. | Make sure your own autocmd calls `require("lint").try_lint()`. |
+| No completion popup (e.g. no `rand::…` suggestions in Rust) | Either a completion engine is running (so the popup belongs to it), your engine lacks the LSP source, builtin completion is disabled, or the item is not a project dependency. | `:Mimic status` shows a `completion` line. With nvim-cmp check `:CmpStatus` for the `lsp` source; without any engine mimic enables builtin completion at attach (see section 5). For crate members run `cargo add <crate>` first. |
 | Rust buffer: plan says lint `none` with "requires Cargo.toml" | No cargo project at the detected root (e.g. a loose .rs file). `cargo clippy` cannot run without a manifest. | Open the buffer inside a cargo project, or configure a different linter yourself. |
 | nvim-lint warns `cargo exited with code: 101` inside a project | Your own config owns the clippy linter, so mimic did not patch it (it never overrides user settings). | Set `require("lint").linters.clippy.ignore_exitcode = true` yourself, or check whether the crate actually fails to build. |
 | An LSP I enabled is not started by mimic | Intentional: mimic never overrides LSP ownership. | Disable your own enablement for that server if you want mimic to own it. |
