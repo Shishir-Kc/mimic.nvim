@@ -56,7 +56,17 @@ dependency. |:Mimic| status reports when it is missing.
 ==============================================================================
 3. INSTALLATION                                          *mimic-installation*
 
-Use lazy.nvim: >lua
+The repository ships a one-command shell installer for lazy.nvim configs: >sh
+
+  sh -c 'curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh | sh'
+<
+It writes the spec below into a LazyVim-style lua/plugins/ directory and runs
+lazy's sync headlessly, or prints paste instructions otherwise. "--demo" builds
+an isolated NVIM_APPNAME=mimic-demo config that never touches your own. The
+installer only clones plugins; language tools still wait an explicit
+|:Mimic-install|.
+
+Manual setup uses lazy.nvim: >lua
 
   {
     "Shishir-Kc/mimic.nvim",

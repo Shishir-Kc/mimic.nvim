@@ -21,6 +21,8 @@ A practical, step-by-step usage guide lives in [USAGE.md](USAGE.md).
 ## Requirements
 
 - Neovim 0.11.3 or newer.
+- `git` and any POSIX shell (`sh`) for the one-command installer only; mimic
+  itself does not need them at runtime.
 - [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) for LSP server definitions.
 - [conform.nvim](https://github.com/stevearc/conform.nvim) for formatting.
 - [nvim-lint](https://github.com/mfussenegger/nvim-lint) for linting.
@@ -33,6 +35,49 @@ dependency and is not declared in the lazy.nvim spec below. `:Mimic status`
 reports when it is missing.
 
 ## Installation
+
+### One command (recommended)
+
+Adds mimic to a lazy.nvim-managed config. LazyVim-style setups (a `lua/plugins/`
+directory that lazy loads automatically) get a spec file written and synced
+headlessly; other lazy setups get a spec to paste instead. An existing mimic
+spec is never overwritten unless you pass `--force`.
+
+```sh
+sh -c 'curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh | sh'
+```
+
+If you prefer to read the script before running it, use the two-step version:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh -o /tmp/mimic-install.sh
+less /tmp/mimic-install.sh
+sh /tmp/mimic-install.sh
+```
+
+### Try it without touching your config (`--demo`)
+
+`--demo` builds an isolated `NVIM_APPNAME=mimic-demo` config (lazy.nvim,
+mimic, nvim-lspconfig, conform.nvim, nvim-lint, mason.nvim) and never touches
+your real one. Open a Rust file from a crate directory (one with a
+`Cargo.toml`) and type a member access such as `rand::` to see suggestions;
+`:Mimic status` explains what mimic detected.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh | sh -s -- --demo
+NVIM_APPNAME=mimic-demo nvim
+```
+
+The demo is throwaway; remove it with:
+
+```sh
+rm -rf ~/.config/mimic-demo ~/.local/share/mimic-demo
+```
+
+The installer only ever edits plugin specs and clones plugins. It does not
+download language tools.
+
+### Manual
 
 With lazy.nvim:
 
