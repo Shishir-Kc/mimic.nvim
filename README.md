@@ -1,5 +1,7 @@
 # mimic.nvim
 
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/Shishir-Kc/badge.svg)](https://hub.xerj.org/contributors/Shishir-Kc)
+
 Adaptive language tooling for Neovim and LazyVim. `mimic` is designed to detect
 the language and project context of the current buffer, then choose and
 configure the right LSP server, linter, and formatter. Existing configuration
