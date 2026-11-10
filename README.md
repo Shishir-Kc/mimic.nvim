@@ -76,8 +76,26 @@ The demo is throwaway; remove it with:
 rm -rf ~/.config/mimic-demo ~/.local/share/mimic-demo
 ```
 
-The installer only ever edits plugin specs and clones plugins. It does not
-download language tools.
+### Installing language tools (`--tools`)
+
+By default the installer only edits plugin specs and clones plugins. Pass
+`--tools` to also install a default set of language tools through Mason, or
+`--tools-only` to skip the plugin step (for example when mimic is already
+installed):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh | sh -s -- --tools
+curl -fsSL https://raw.githubusercontent.com/Shishir-Kc/mimic.nvim/main/install.sh | sh -s -- --tools-only=java,js
+```
+
+The optional list picks languages from `python,rust,c,java,js` (`c` covers C
+and C++, `js` covers JavaScript and TypeScript); the default is all of them.
+It installs one language server plus the usual formatter per language, for
+example `basedpyright` and `ruff` for Python or `typescript-language-server`,
+`prettier` and `eslint_d` for JS/TS. rustfmt and clippy come from rustup. Mason
+needs `npm`, `python3`, or a JDK for the matching packages, and the installer
+warns when one is missing. Nothing is downloaded without one of these flags.
+`--demo --tools` installs them into the demo config.
 
 ### Manual
 

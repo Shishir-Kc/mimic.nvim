@@ -9,7 +9,9 @@
 # NVIM_APPNAME=mimic-demo config that never touches a real one.
 #
 # mimic never installs language tools itself: only an explicit :Mimic install
-# prompts a Mason download. This script only ever clones plugins.
+# prompts a Mason download. This script only clones plugins, unless you pass
+# --tools / --tools-only, which install a default set of language tools through
+# Mason (opt-in, never implicit).
 
 set -eu
 
@@ -27,20 +29,48 @@ mimic.nvim installer
   install.sh            add mimic to the current lazy.nvim Neovim config
   install.sh --demo     try mimic in an isolated NVIM_APPNAME=mimic-demo config
   install.sh --force    overwrite an existing mimic spec file
+  install.sh --tools[=LIST]
+                        after installing, also install language tools via Mason
+  install.sh --tools-only[=LIST]
+                        skip the plugin install; only install language tools
   install.sh --help     this help
 
-Only :Mimic install ever downloads language tools, never this script.
-Bare buffers first: run "sh install.sh --demo" and open a Rust file from a
-crate with a Cargo.toml.
+LIST is a comma separated subset of: python,rust,c,java,js (default: all).
+"c" covers C and C++, "js" covers JavaScript and TypeScript. Default packages:
+  python  basedpyright ruff
+  rust    rust-analyzer   (rustfmt and clippy come from rustup)
+  c       clangd clang-format
+  java    jdtls google-java-format
+  js      typescript-language-server prettier eslint_d
+
+Language tools are downloaded only when you pass --tools or --tools-only (or
+run :Mimic install later). Combine with --demo to install them into the demo.
 USAGE
 }
 
 DEMO=0
 FORCE=0
+TOOLS=0
+TOOLS_ONLY=0
+TOOL_LANGS="all"
 while [ $# -gt 0 ]; do
   case "$1" in
     --demo) DEMO=1 ;;
     --force) FORCE=1 ;;
+    --tools) TOOLS=1 ;;
+    --tools=*)
+      TOOLS=1
+      TOOL_LANGS=${1#--tools=}
+      ;;
+    --tools-only)
+      TOOLS=1
+      TOOLS_ONLY=1
+      ;;
+    --tools-only=*)
+      TOOLS=1
+      TOOLS_ONLY=1
+      TOOL_LANGS=${1#--tools-only=}
+      ;;
     -h | --help)
       usage
       exit 0
@@ -93,6 +123,9 @@ elif [ "$NVIM_MAJOR" -eq 0 ] && [ "$NVIM_MINOR" -eq 11 ] && [ "$NVIM_PATCH" -lt 
 fi
 
 manual_instructions() {
+  if [ "$TOOLS" -eq 1 ]; then
+    warn "--tools skipped: install the plugin spec first, then rerun with --tools-only"
+  fi
   cat <<'MANUAL'
 This config is not a lazy.nvim setup with auto-loaded specs, so the installer
 did not write anything. Paste the spec below wherever your plugins are:
@@ -114,6 +147,150 @@ did not write anything. Paste the spec below wherever your plugins are:
 Or build a throwaway config with: sh install.sh --demo
 See https://github.com/Shishir-Kc/mimic.nvim#installation for details.
 MANUAL
+}
+
+# Map the requested languages to Mason package names. One language server plus
+# the usual formatter per language; alternatives (pyright, vtsls, ...) are left
+# to :Mimic install so two servers never compete for the same project.
+tool_packages() {
+  _langs=$(printf '%s' "$TOOL_LANGS" | tr ',' ' ')
+  [ "$_langs" = "all" ] && _langs="python rust c java js"
+  _out=""
+  for _lang in $_langs; do
+    case "$_lang" in
+      python) _out="$_out basedpyright ruff" ;;
+      rust) _out="$_out rust-analyzer" ;;
+      c | cpp | clang) _out="$_out clangd clang-format" ;;
+      java) _out="$_out jdtls google-java-format" ;;
+      js | ts | javascript | typescript)
+        _out="$_out typescript-language-server prettier eslint_d"
+        ;;
+      *) die "unknown language in --tools: $_lang (use python,rust,c,java,js)" ;;
+    esac
+  done
+  printf '%s\n' $_out | sort -u | tr '\n' ' '
+}
+
+# Warn about runtimes Mason needs to build a package, before the long download.
+check_runtimes() {
+  case " $1 " in
+    *" typescript-language-server "* | *" prettier "* | *" eslint_d "*)
+      command -v npm >/dev/null 2>&1 || warn "npm not found: JS/TS tools will fail to install"
+      ;;
+  esac
+  case " $1 " in
+    *" basedpyright "* | *" ruff "*)
+      command -v python3 >/dev/null 2>&1 || warn "python3 not found: Python tools will fail to install"
+      ;;
+  esac
+  case " $1 " in
+    *" jdtls "* | *" google-java-format "*)
+      command -v java >/dev/null 2>&1 || warn "java not found: jdtls needs a JDK to run"
+      ;;
+  esac
+}
+
+# Install packages through Mason using the user's own config (so Mason's data
+# dir and registry match what mimic detects). $1 = NVIM_APPNAME or empty.
+install_tools() {
+  PACKAGES=$(tool_packages)
+  msg "Installing language tools via Mason: $PACKAGES"
+  check_runtimes "$PACKAGES"
+
+  cat > "$TMP/tools.lua" <<'EOF'
+local pkgs = vim.split(vim.env.MIMIC_TOOLS or "", "%s+", { trimempty = true })
+
+local function finish(code)
+  vim.cmd((code == 0) and "qa!" or "cquit")
+end
+
+local lazy_ok, lazy = pcall(require, "lazy")
+if lazy_ok then
+  pcall(lazy.load, { plugins = { "mason.nvim" } })
+end
+
+local ok, mason = pcall(require, "mason")
+if not ok then
+  print("tools-error: mason.nvim is not available in this config")
+  return finish(1)
+end
+if mason.has_setup ~= true and vim.fn.exists(":MasonInstall") ~= 2 then
+  pcall(mason.setup)
+end
+
+local registry = require("mason-registry")
+local refreshed = false
+registry.refresh(function() refreshed = true end)
+vim.wait(60000, function() return refreshed end, 100)
+
+local failed = 0
+for _, name in ipairs(pkgs) do
+  local got, pkg = pcall(registry.get_package, name)
+  if not got then
+    print(("tool-fail:%s:not in the Mason registry"):format(name))
+    failed = failed + 1
+  elseif pkg:is_installed() then
+    print(("tool-ok:%s:already installed"):format(name))
+  else
+    local done, err = false, nil
+    local started, handle = pcall(function()
+      return pkg:install({}, function(success, result)
+        if not success then err = tostring(result) end
+        done = true
+      end)
+    end)
+    if not started then
+      print(("tool-fail:%s:%s"):format(name, tostring(handle)))
+      failed = failed + 1
+    else
+      vim.wait(900000, function() return done end, 200)
+      if done and not err and pkg:is_installed() then
+        print(("tool-ok:%s:installed"):format(name))
+      else
+        local reason = (err or "timed out"):gsub("%s+", " "):sub(1, 160)
+        print(("tool-fail:%s:%s"):format(name, reason))
+        failed = failed + 1
+      end
+    end
+  end
+end
+print("tools-failed:" .. failed)
+finish(0)
+EOF
+
+  _appname=${1:-${NVIM_APPNAME:-}}
+  if command -v timeout >/dev/null 2>&1; then
+    TOOLS_OUT=$(env MIMIC_TOOLS="$PACKAGES" ${_appname:+NVIM_APPNAME="$_appname"} \
+      timeout 1800 nvim --headless -u "$NVIM_CONFIG/init.lua" -l "$TMP/tools.lua" 2>&1) || true
+  else
+    TOOLS_OUT=$(env MIMIC_TOOLS="$PACKAGES" ${_appname:+NVIM_APPNAME="$_appname"} \
+      nvim --headless -u "$NVIM_CONFIG/init.lua" -l "$TMP/tools.lua" 2>&1) || true
+  fi
+
+  printf '%s\n' "$TOOLS_OUT" | grep '^tools-error:' | while IFS= read -r line; do
+    warn "$line"
+  done
+  printf '%s\n' "$TOOLS_OUT" | grep '^tool-ok:' | while IFS=: read -r _ name note; do
+    msg "  ok    $name ($note)"
+  done
+  printf '%s\n' "$TOOLS_OUT" | grep '^tool-fail:' | while IFS=: read -r _ name note; do
+    warn "  FAIL  $name: $note"
+  done
+  if ! printf '%s\n' "$TOOLS_OUT" | grep -q '^tools-failed:'; then
+    warn "tool installer did not finish; run :Mimic install inside Neovim for details"
+  elif ! printf '%s\n' "$TOOLS_OUT" | grep -q '^tools-failed:0$'; then
+    warn "some tools failed; retry with :Mimic install or :Mason"
+  fi
+
+  case " $PACKAGES " in
+    *" rust-analyzer "*)
+      if command -v rustup >/dev/null 2>&1; then
+        msg "Rust: rustfmt and clippy come from rustup: rustup component add rustfmt clippy"
+      else
+        msg "Rust: install rustup for rustfmt and clippy (https://rustup.rs)"
+      fi
+      ;;
+  esac
 }
 
 install() {
@@ -276,8 +453,19 @@ mimic detected. The demo is throwaway:
 NEXT
 }
 
-if [ "$DEMO" -eq 1 ]; then
+if [ "$TOOLS_ONLY" -eq 1 ]; then
+  [ "$DEMO" -eq 1 ] && die "--tools-only cannot be combined with --demo; use --demo --tools"
+  [ -f "$NVIM_CONFIG/init.lua" ] || die "$NVIM_CONFIG/init.lua not found; is this the right Neovim config?"
+  install_tools ""
+elif [ "$DEMO" -eq 1 ]; then
   demo
+  if [ "$TOOLS" -eq 1 ]; then
+    NVIM_CONFIG="$DEMO_CFG"
+    install_tools "$DEMO_APPNAME"
+  fi
 else
   install
+  if [ "$TOOLS" -eq 1 ]; then
+    install_tools ""
+  fi
 fi
